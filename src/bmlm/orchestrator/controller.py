@@ -1,15 +1,20 @@
 """Main orchestrator for coordinating big and small models."""
 
+from __future__ import annotations
+
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Callable
+from typing import TYPE_CHECKING, Callable
 
 import structlog
 
-from bmlm.models.big_model import BigModel
-from bmlm.models.small_model import Confidence, SmallModel
+from bmlm.models.small_model import Confidence
 from bmlm.orchestrator.plan import Plan
+
+if TYPE_CHECKING:
+    from bmlm.models.big_model import BigModel
+    from bmlm.models.small_model import SmallModel
 
 log = structlog.get_logger()
 

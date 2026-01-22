@@ -31,21 +31,22 @@ def setup_environment(config: dict):
     """Set up AndroidWorld environment.
 
     Returns:
-        Tuple of (env, task_registry)
+        Tuple of (controller, task_registry)
     """
-    from android_world.env import android_world_controller
-    from android_world.task_evals import task_registry as registry
+    from android_world.env.android_world_controller import get_controller
+    from android_world.registry import TaskRegistry
 
-    log.info("setting_up_environment", avd=config["android"]["avd_name"])
+    log.info("setting_up_environment")
 
-    # Create controller
-    controller = android_world_controller.AndroidWorldController(
-        avd_name=config["android"]["avd_name"],
+    # Create controller using get_controller helper
+    controller = get_controller(
+        console_port=5554,  # Default emulator console port
+        adb_path=config["android"].get("adb_path", "~/Library/Android/sdk/platform-tools/adb"),
         grpc_port=config["android"]["grpc_port"],
     )
 
     # Get task registry
-    task_reg = registry.TaskRegistry()
+    task_reg = TaskRegistry()
 
     return controller, task_reg
 

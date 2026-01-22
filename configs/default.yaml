@@ -10,7 +10,7 @@ models:
     top_p: 0.9
 
   small:
-    # Qwen2.5-3B for execution (text-only, faster)
+    # Qwen2.5-3B for execution (text-only, faster), and somehow faster than the 1.5B model
     path: "mlx-community/Qwen2.5-3B-Instruct-4bit"
     max_tokens: 256
     temperature: 0.5
@@ -42,6 +42,9 @@ android:
 
   # gRPC port for accessibility forwarding
   grpc_port: 8554
+
+  # ADB path
+  adb_path: "~/Library/Android/sdk/platform-tools/adb"
 
   # ADB serial (usually emulator-5554)
   adb_serial: "emulator-5554"
