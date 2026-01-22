@@ -1,0 +1,49 @@
+[project]
+name = "bmlm"
+version = "0.1.0"
+description = "Big Model Little Model: Hierarchical agents for Android GUI automation"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    # MLX for Apple Silicon inference
+    "mlx>=0.22.0",
+    "mlx-lm>=0.21.0",
+
+    # AndroidWorld benchmark
+    "android-world @ git+https://github.com/google-research/android_world.git",
+
+    # Core utilities
+    "pillow>=10.0.0",
+    "pyyaml>=6.0",
+    "numpy>=1.24.0",
+
+    # Logging and metrics
+    "structlog>=24.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "ruff>=0.4.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[tool.hatch.build.targets.sdist]
+include = ["src/bmlm"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/bmlm"]
+sources = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]

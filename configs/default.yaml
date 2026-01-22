@@ -1,0 +1,67 @@
+# BMLM Configuration
+
+# Model configuration
+models:
+  big:
+    # Qwen2.5-VL-7B for planning (vision-language model)
+    path: "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+    max_tokens: 1024
+    temperature: 0.7
+    top_p: 0.9
+
+  small:
+    # Qwen2.5-3B for execution (text-only, faster)
+    path: "mlx-community/Qwen2.5-3B-Instruct-4bit"
+    max_tokens: 256
+    temperature: 0.5
+    top_p: 0.9
+
+# Alternative small models to try:
+# - mlx-community/Qwen2.5-1.5B-Instruct-4bit  (faster, less capable)
+# - mlx-community/gemma-2-2b-it-4bit          (different architecture)
+
+# Orchestrator settings
+orchestrator:
+  # Trigger big model after this many small model steps
+  max_steps_without_replan: 10
+
+  # Maximum retries per step before marking as failed
+  max_retries_per_step: 3
+
+  # Delay between actions (ms) to let UI settle
+  wait_after_action_ms: 500
+
+  # Confidence threshold for triggering replan
+  # Options: high, medium, low
+  confidence_threshold: medium
+
+# Android emulator settings
+android:
+  # AVD name (must match your Android Studio AVD)
+  avd_name: "AndroidWorldAvd"
+
+  # gRPC port for accessibility forwarding
+  grpc_port: 8554
+
+  # ADB serial (usually emulator-5554)
+  adb_serial: "emulator-5554"
+
+# Benchmark settings
+benchmark:
+  # Maximum steps per task
+  max_steps_per_task: 50
+
+  # Tasks to run (empty = all tasks)
+  task_filter: []
+
+  # Number of task instances per task type
+  n_task_instances: 1
+
+# Logging
+logging:
+  level: INFO
+  # Log all model inputs/outputs for debugging
+  log_model_io: false
+  # Save action history to file
+  save_history: true
+  history_dir: "./logs"
