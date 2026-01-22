@@ -44,8 +44,8 @@ results/
 *.json
 !configs/*.json
 
-# Model cache (large files)
-models/
+# Model cache (large files - HuggingFace downloads)
+/models/
 *.mlx
 *.safetensors
 
