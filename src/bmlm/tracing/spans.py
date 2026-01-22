@@ -1,0 +1,264 @@
+"""Span helpers for tracing different components."""
+
+from contextlib import contextmanager
+from typing import Any, Generator, Optional
+
+from bmlm.tracing.setup import get_tracer, is_tracing_enabled
+
+# Task-level metadata that gets attached to all spans
+_current_task_metadata: dict[str, Any] = {}
+
+
+def set_task_metadata(
+    task_name: str,
+    goal: str,
+    **extra: Any,
+) -> None:
+    """Set metadata for the current task (attached to all subsequent spans).
+
+    Args:
+        task_name: Name of the task being run
+        goal: Task goal description
+        **extra: Additional metadata
+    """
+    global _current_task_metadata
+    _current_task_metadata = {
+        "task.name": task_name,
+        "task.goal": goal,
+        **extra,
+    }
+
+
+def _add_task_metadata(span) -> None:
+    """Add current task metadata to a span."""
+    for key, value in _current_task_metadata.items():
+        if value is not None:
+            span.set_attribute(key, str(value) if not isinstance(value, (int, float, bool)) else value)
+
+
+@contextmanager
+def trace_big_model(
+    task: str,
+    ui_elements_count: int,
+    model_path: str,
+    previous_actions_count: int = 0,
+) -> Generator[dict, None, None]:
+    """Trace a big model (planner) generation call.
+
+    Args:
+        task: The task/goal being planned
+        ui_elements_count: Number of UI elements in context
+        model_path: Model being used
+        previous_actions_count: Number of previous actions provided
+
+    Yields:
+        Dict to populate with results (plan_steps, generation_time_ms, etc.)
+    """
+    if not is_tracing_enabled():
+        yield {}
+        return
+
+    tracer = get_tracer("bmlm.big_model")
+    result: dict[str, Any] = {}
+
+    with tracer.start_as_current_span("big_model.generate") as span:
+        _add_task_metadata(span)
+        span.set_attribute("llm.model", model_path)
+        span.set_attribute("llm.role", "planner")
+        span.set_attribute("input.task", task)
+        span.set_attribute("input.ui_elements_count", ui_elements_count)
+        span.set_attribute("input.previous_actions_count", previous_actions_count)
+
+        yield result
+
+        # Set output attributes from result dict
+        if "plan_steps" in result:
+            span.set_attribute("output.plan_steps", result["plan_steps"])
+        if "plan_goal" in result:
+            span.set_attribute("output.plan_goal", result["plan_goal"])
+        if "generation_time_ms" in result:
+            span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
+        if "tokens" in result:
+            span.set_attribute("metrics.tokens", result["tokens"])
+        if "raw_output" in result:
+            span.set_attribute("output.raw", result["raw_output"][:2000])  # Truncate
+
+
+@contextmanager
+def trace_small_model(
+    current_step: str,
+    step_index: int,
+    ui_elements_count: int,
+    model_path: str,
+    recent_actions_count: int = 0,
+) -> Generator[dict, None, None]:
+    """Trace a small model (executor) generation call.
+
+    Args:
+        current_step: The current plan step being executed
+        step_index: Index of current step in plan
+        ui_elements_count: Number of UI elements in context
+        model_path: Model being used
+        recent_actions_count: Number of recent actions in context
+
+    Yields:
+        Dict to populate with results (action, confidence, etc.)
+    """
+    if not is_tracing_enabled():
+        yield {}
+        return
+
+    tracer = get_tracer("bmlm.small_model")
+    result: dict[str, Any] = {}
+
+    with tracer.start_as_current_span("small_model.generate") as span:
+        _add_task_metadata(span)
+        span.set_attribute("llm.model", model_path)
+        span.set_attribute("llm.role", "executor")
+        span.set_attribute("input.current_step", current_step)
+        span.set_attribute("input.step_index", step_index)
+        span.set_attribute("input.ui_elements_count", ui_elements_count)
+        span.set_attribute("input.recent_actions_count", recent_actions_count)
+
+        yield result
+
+        # Set output attributes
+        if "action" in result:
+            span.set_attribute("output.action", result["action"])
+        if "target_id" in result:
+            span.set_attribute("output.target_id", str(result["target_id"]))
+        if "confidence" in result:
+            span.set_attribute("output.confidence", result["confidence"])
+        if "needs_replanning" in result:
+            span.set_attribute("output.needs_replanning", result["needs_replanning"])
+        if "generation_time_ms" in result:
+            span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
+        if "raw_output" in result:
+            span.set_attribute("output.raw", result["raw_output"][:2000])
+
+
+@contextmanager
+def trace_action(
+    action_type: str,
+    target_id: Optional[str] = None,
+    coords: Optional[tuple[int, int]] = None,
+) -> Generator[dict, None, None]:
+    """Trace an action execution on the Android device.
+
+    Args:
+        action_type: Type of action (tap, swipe, type, etc.)
+        target_id: Target element ID if applicable
+        coords: Target coordinates if applicable
+
+    Yields:
+        Dict to populate with results (success, duration_ms, etc.)
+    """
+    if not is_tracing_enabled():
+        yield {}
+        return
+
+    tracer = get_tracer("bmlm.actions")
+    result: dict[str, Any] = {}
+
+    with tracer.start_as_current_span(f"action.{action_type}") as span:
+        _add_task_metadata(span)
+        span.set_attribute("action.type", action_type)
+        if target_id:
+            span.set_attribute("action.target_id", target_id)
+        if coords:
+            span.set_attribute("action.coords", f"{coords[0]},{coords[1]}")
+
+        yield result
+
+        if "success" in result:
+            span.set_attribute("action.success", result["success"])
+        if "duration_ms" in result:
+            span.set_attribute("metrics.duration_ms", result["duration_ms"])
+        if "error" in result:
+            span.set_attribute("action.error", result["error"])
+
+
+@contextmanager
+def trace_task(
+    task_name: str,
+    goal: str,
+    max_steps: int,
+) -> Generator[dict, None, None]:
+    """Trace an entire task execution.
+
+    Args:
+        task_name: Name of the AndroidWorld task
+        goal: Task goal description
+        max_steps: Maximum steps allowed
+
+    Yields:
+        Dict to populate with results (success, steps, score, etc.)
+    """
+    if not is_tracing_enabled():
+        yield {}
+        return
+
+    # Set task metadata for child spans
+    set_task_metadata(task_name, goal, max_steps=max_steps)
+
+    tracer = get_tracer("bmlm.benchmark")
+    result: dict[str, Any] = {}
+
+    with tracer.start_as_current_span(f"task.{task_name}") as span:
+        span.set_attribute("task.name", task_name)
+        span.set_attribute("task.goal", goal)
+        span.set_attribute("task.max_steps", max_steps)
+
+        yield result
+
+        if "success" in result:
+            span.set_attribute("task.success", result["success"])
+        if "score" in result:
+            span.set_attribute("task.score", result["score"])
+        if "steps" in result:
+            span.set_attribute("task.steps_taken", result["steps"])
+        if "replans" in result:
+            span.set_attribute("task.replans", result["replans"])
+        if "elapsed_s" in result:
+            span.set_attribute("metrics.elapsed_s", result["elapsed_s"])
+        if "error" in result:
+            span.set_attribute("task.error", result["error"])
+
+
+@contextmanager
+def trace_orchestrator_step(
+    step_number: int,
+    plan_step: str,
+    steps_since_replan: int,
+) -> Generator[dict, None, None]:
+    """Trace an orchestrator step.
+
+    Args:
+        step_number: Overall step number
+        plan_step: Current plan step description
+        steps_since_replan: Steps since last replan
+
+    Yields:
+        Dict to populate with results
+    """
+    if not is_tracing_enabled():
+        yield {}
+        return
+
+    tracer = get_tracer("bmlm.orchestrator")
+    result: dict[str, Any] = {}
+
+    with tracer.start_as_current_span("orchestrator.step") as span:
+        _add_task_metadata(span)
+        span.set_attribute("orchestrator.step_number", step_number)
+        span.set_attribute("orchestrator.plan_step", plan_step)
+        span.set_attribute("orchestrator.steps_since_replan", steps_since_replan)
+
+        yield result
+
+        if "triggered_replan" in result:
+            span.set_attribute("orchestrator.triggered_replan", result["triggered_replan"])
+        if "trigger_reason" in result:
+            span.set_attribute("orchestrator.trigger_reason", result["trigger_reason"])
+        if "action_success" in result:
+            span.set_attribute("orchestrator.action_success", result["action_success"])

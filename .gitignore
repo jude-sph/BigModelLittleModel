@@ -52,3 +52,10 @@ results/
 # Android
 *.apk
 *.aab
+
+# Jeeves Android app build artifacts
+jeeves/.gradle/
+jeeves/.idea/
+jeeves/app/build/
+jeeves/build/
+jeeves/local.properties

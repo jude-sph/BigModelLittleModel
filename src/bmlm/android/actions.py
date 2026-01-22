@@ -1,10 +1,14 @@
-"""Action execution for Android devices via AndroidWorld."""
+"""Action execution for Android devices via AndroidWorld and Jeeves."""
 
+import time
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Optional
 
 import structlog
+
+from bmlm.android.jeeves_client import JeevesClient
+from bmlm.tracing import trace_action
 
 log = structlog.get_logger()
 
@@ -26,47 +30,38 @@ class Action:
     """An action to execute on the Android device."""
 
     action_type: ActionType
-    target_id: str | None = None
-    coords: tuple[int, int] | None = None
+    target_index: int | None = None  # Jeeves element index
     text: str | None = None
     direction: str | None = None  # up, down, left, right
     duration_ms: int | None = None  # for long_press
 
 
 class ActionExecutor:
-    """Executes actions on an Android device via AndroidWorld environment."""
+    """Executes actions on an Android device via AndroidWorld + Jeeves.
 
-    def __init__(self, env: Any):
+    Uses Jeeves for UI element indexing and AndroidWorld for action execution.
+    """
+
+    def __init__(self, env: Any, device_serial: str = "emulator-5554"):
         """Initialize with an AndroidWorld environment.
 
         Args:
             env: AndroidWorld environment instance
+            device_serial: ADB device serial for Jeeves queries
         """
         self.env = env
+        self.jeeves = JeevesClient(device_serial=device_serial)
         self._ui_elements_cache: list[dict] = []
 
     def get_ui_elements(self) -> list[dict]:
-        """Get current UI elements from the environment.
+        """Get current UI elements from Jeeves.
 
         Returns:
-            List of UI element dictionaries with id, text, type, bounds
+            List of UI element dictionaries with index, text, type, etc.
+            Indices match the numbered overlays shown on screen.
         """
         try:
-            state = self.env.get_state(wait_to_stabilize=True)
-
-            elements = []
-            if hasattr(state, "ui_elements"):
-                for elem in state.ui_elements:
-                    elements.append({
-                        "id": getattr(elem, "resource_id", None) or getattr(elem, "id", None),
-                        "text": getattr(elem, "text", ""),
-                        "content_desc": getattr(elem, "content_description", ""),
-                        "type": getattr(elem, "class_name", "unknown"),
-                        "bounds": getattr(elem, "bounds", None),
-                        "clickable": getattr(elem, "clickable", False),
-                        "enabled": getattr(elem, "enabled", True),
-                    })
-
+            elements = self.jeeves.refresh()
             self._ui_elements_cache = elements
             return elements
         except Exception as e:
@@ -79,101 +74,119 @@ class ActionExecutor:
         Args:
             action_dict: Action dictionary with keys:
                 - action: str (tap, type, swipe, etc.)
-                - target_id: str | None
-                - target_coords: tuple[int, int] | None
-                - input_text: str | None
-                - direction: str | None
+                - target_index: int | None (Jeeves element index)
+                - input_text: str | None (for type action)
+                - direction: str | None (for swipe/scroll)
 
         Returns:
             True if action executed successfully
         """
         action_type = action_dict.get("action", "wait")
-        target_id = action_dict.get("target_id")
-        coords = action_dict.get("target_coords")
+        target_index = action_dict.get("target_index")
         text = action_dict.get("input_text")
         direction = action_dict.get("direction")
 
-        try:
-            # Map action to AndroidWorld action
-            if action_type == "tap":
-                return self._tap(target_id, coords)
-            elif action_type == "long_press":
-                return self._long_press(target_id, coords)
-            elif action_type == "type":
-                return self._type_text(text or "")
-            elif action_type == "swipe":
-                return self._swipe(direction or "up")
-            elif action_type == "scroll":
-                return self._scroll(direction or "down")
-            elif action_type == "navigate_home":
-                return self._navigate_home()
-            elif action_type == "navigate_back":
-                return self._navigate_back()
-            elif action_type == "wait":
-                return self._wait()
-            elif action_type == "open_app":
-                return self._open_app(text or "")
-            else:
-                log.warning("unknown_action_type", action_type=action_type)
+        with trace_action(
+            action_type=action_type,
+            target_id=str(target_index) if target_index is not None else None,
+            coords=self.jeeves.get_tap_coordinates(target_index) if target_index is not None else None,
+        ) as trace_result:
+            start_time = time.perf_counter()
+            try:
+                # Map action to execution method
+                if action_type == "tap":
+                    success = self._tap_by_index(target_index)
+                elif action_type == "long_press":
+                    success = self._long_press_by_index(target_index)
+                elif action_type == "type":
+                    success = self._type_text(text or "")
+                elif action_type == "swipe":
+                    success = self._swipe(direction or "up")
+                elif action_type == "scroll":
+                    success = self._scroll(direction or "down")
+                elif action_type == "navigate_home":
+                    success = self._navigate_home()
+                elif action_type == "navigate_back":
+                    success = self._navigate_back()
+                elif action_type == "wait":
+                    success = self._wait()
+                elif action_type == "open_app":
+                    success = self._open_app(text or "")
+                else:
+                    log.warning("unknown_action_type", action_type=action_type)
+                    success = False
+
+                trace_result["success"] = success
+                trace_result["duration_ms"] = (time.perf_counter() - start_time) * 1000
+                return success
+
+            except Exception as e:
+                log.error("action_execution_failed", action=action_type, error=str(e))
+                trace_result["success"] = False
+                trace_result["error"] = str(e)
+                trace_result["duration_ms"] = (time.perf_counter() - start_time) * 1000
                 return False
 
-        except Exception as e:
-            log.error("action_execution_failed", action=action_type, error=str(e))
-            return False
+    def _get_coords_by_index(self, index: int | None) -> Optional[tuple[int, int]]:
+        """Get tap coordinates for a Jeeves element index.
 
-    def _find_element_coords(self, target_id: str | None) -> tuple[int, int] | None:
-        """Find center coordinates of an element by ID."""
-        if not target_id:
+        Args:
+            index: Jeeves element index (matches overlay numbers)
+
+        Returns:
+            (x, y) center coordinates, or None if not found
+        """
+        if index is None:
             return None
+        return self.jeeves.get_tap_coordinates(index)
 
-        for elem in self._ui_elements_cache:
-            if elem.get("id") == target_id or target_id in str(elem.get("text", "")):
-                bounds = elem.get("bounds")
-                if bounds:
-                    # Bounds format varies, handle common cases
-                    if isinstance(bounds, dict):
-                        x = (bounds.get("left", 0) + bounds.get("right", 0)) // 2
-                        y = (bounds.get("top", 0) + bounds.get("bottom", 0)) // 2
-                        return (x, y)
-                    elif isinstance(bounds, (list, tuple)) and len(bounds) == 4:
-                        x = (bounds[0] + bounds[2]) // 2
-                        y = (bounds[1] + bounds[3]) // 2
-                        return (x, y)
-        return None
+    def _tap_by_index(self, index: int | None) -> bool:
+        """Execute a tap action by Jeeves element index.
 
-    def _tap(self, target_id: str | None, coords: tuple[int, int] | None) -> bool:
-        """Execute a tap action."""
-        if not coords:
-            coords = self._find_element_coords(target_id)
+        Args:
+            index: Jeeves element index to tap
+
+        Returns:
+            True if tap executed successfully
+        """
+        coords = self._get_coords_by_index(index)
 
         if not coords:
-            log.warning("tap_no_coords", target_id=target_id)
+            log.warning("tap_no_coords", target_index=index)
             return False
 
-        from android_world.env.json_action import JSONAction, CLICK
+        from android_world.env.json_action import CLICK, JSONAction
 
+        log.info("tap_by_index", index=index, coords=coords)
         action = JSONAction(action_type=CLICK, x=coords[0], y=coords[1])
         self.env.execute_action(action)
         return True
 
-    def _long_press(self, target_id: str | None, coords: tuple[int, int] | None) -> bool:
-        """Execute a long press action."""
-        if not coords:
-            coords = self._find_element_coords(target_id)
+    def _long_press_by_index(self, index: int | None) -> bool:
+        """Execute a long press action by Jeeves element index.
+
+        Args:
+            index: Jeeves element index to long press
+
+        Returns:
+            True if long press executed successfully
+        """
+        coords = self._get_coords_by_index(index)
 
         if not coords:
-            log.warning("long_press_no_coords", target_id=target_id)
+            log.warning("long_press_no_coords", target_index=index)
             return False
 
-        from android_world.env.json_action import JSONAction, LONG_PRESS
+        from android_world.env.json_action import LONG_PRESS, JSONAction
 
+        log.info("long_press_by_index", index=index, coords=coords)
         action = JSONAction(action_type=LONG_PRESS, x=coords[0], y=coords[1])
         self.env.execute_action(action)
         return True
 
     def _type_text(self, text: str) -> bool:
         """Type text into the focused field."""
-        from android_world.env.json_action import JSONAction, INPUT_TEXT
+        from android_world.env.json_action import INPUT_TEXT, JSONAction
 
         action = JSONAction(action_type=INPUT_TEXT, text=text)
         self.env.execute_action(action)
@@ -181,7 +194,7 @@ class ActionExecutor:
 
     def _swipe(self, direction: str) -> bool:
         """Execute a swipe action."""
-        from android_world.env.json_action import JSONAction, SWIPE
+        from android_world.env.json_action import SWIPE, JSONAction
 
         action = JSONAction(action_type=SWIPE, direction=direction)
         self.env.execute_action(action)
@@ -189,7 +202,7 @@ class ActionExecutor:
 
     def _scroll(self, direction: str) -> bool:
         """Execute a scroll action."""
-        from android_world.env.json_action import JSONAction, SCROLL
+        from android_world.env.json_action import SCROLL, JSONAction
 
         action = JSONAction(action_type=SCROLL, direction=direction)
         self.env.execute_action(action)
@@ -197,7 +210,7 @@ class ActionExecutor:
 
     def _navigate_home(self) -> bool:
         """Navigate to home screen."""
-        from android_world.env.json_action import JSONAction, NAVIGATE_HOME
+        from android_world.env.json_action import NAVIGATE_HOME, JSONAction
 
         action = JSONAction(action_type=NAVIGATE_HOME)
         self.env.execute_action(action)
@@ -205,7 +218,7 @@ class ActionExecutor:
 
     def _navigate_back(self) -> bool:
         """Navigate back."""
-        from android_world.env.json_action import JSONAction, NAVIGATE_BACK
+        from android_world.env.json_action import NAVIGATE_BACK, JSONAction
 
         action = JSONAction(action_type=NAVIGATE_BACK)
         self.env.execute_action(action)
@@ -213,7 +226,7 @@ class ActionExecutor:
 
     def _wait(self, duration_ms: int = 1000) -> bool:
         """Wait for a specified duration."""
-        from android_world.env.json_action import JSONAction, WAIT
+        from android_world.env.json_action import WAIT, JSONAction
 
         action = JSONAction(action_type=WAIT)
         self.env.execute_action(action)
@@ -221,7 +234,7 @@ class ActionExecutor:
 
     def _open_app(self, app_name: str) -> bool:
         """Open an app by name."""
-        from android_world.env.json_action import JSONAction, OPEN_APP
+        from android_world.env.json_action import OPEN_APP, JSONAction
 
         action = JSONAction(action_type=OPEN_APP, app_name=app_name)
         self.env.execute_action(action)

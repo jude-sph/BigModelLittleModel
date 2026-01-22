@@ -5,6 +5,7 @@ from dataclasses import dataclass
 
 from bmlm.models.base import BaseModel, GenerationResult, ModelConfig
 from bmlm.orchestrator.plan import Plan, PlanStep
+from bmlm.tracing import trace_big_model
 
 
 @dataclass
@@ -20,8 +21,8 @@ PLANNING_SYSTEM_PROMPT = """You are an expert Android GUI automation agent. Your
 
 You will receive:
 1. A task description
-2. A screenshot of the current screen (if available)
-3. A list of UI elements with their IDs and properties
+2. A screenshot of the current screen with numbered overlays
+3. A list of UI elements with their INDEX numbers (matching the numbered overlays)
 
 Output a JSON plan with this structure:
 {
@@ -29,7 +30,7 @@ Output a JSON plan with this structure:
     "steps": [
         {
             "action": "tap|type|swipe|scroll|long_press|navigate_home|navigate_back|wait",
-            "target_id": "element_id or null if needs to be found",
+            "target_index": 5,
             "target_description": "Human-readable description of the target",
             "input_text": "Text to type (only for type action)",
             "direction": "up|down|left|right (only for swipe/scroll)",
@@ -39,7 +40,15 @@ Output a JSON plan with this structure:
     "success_indicator": "How to know the task is complete"
 }
 
-Be specific but flexible. If an exact element ID isn't visible, describe what to look for.
+IMPORTANT:
+- target_index must be an INTEGER matching an element's index from the UI elements list
+- The indices correspond to the numbered overlays visible on the screenshot
+- For tap/long_press: set target_index to the element you want to interact with
+- For swipe/scroll: set direction, target_index is optional
+- For type: set input_text, target_index optional (types in focused field)
+- For navigate_home/navigate_back/wait: no target_index needed
+- Set target_index to null if the element needs to be found dynamically
+
 Keep plans concise - typically 3-7 steps."""
 
 
@@ -68,36 +77,48 @@ class BigModel(BaseModel):
         Returns:
             PlanningResult with the generated plan
         """
-        # Build the prompt
-        prompt_parts = [
-            f"<|im_start|>system\n{self.system_prompt}<|im_end|>",
-            "<|im_start|>user",
-            f"Task: {task}",
-        ]
+        with trace_big_model(
+            task=task,
+            ui_elements_count=len(ui_elements),
+            model_path=self.config.model_path,
+            previous_actions_count=len(previous_actions) if previous_actions else 0,
+        ) as trace_result:
+            # Build the prompt
+            prompt_parts = [
+                f"<|im_start|>system\n{self.system_prompt}<|im_end|>",
+                "<|im_start|>user",
+                f"Task: {task}",
+            ]
 
-        if screenshot_description:
-            prompt_parts.append(f"\nCurrent screen: {screenshot_description}")
+            if screenshot_description:
+                prompt_parts.append(f"\nCurrent screen: {screenshot_description}")
 
-        # Format UI elements concisely
-        elements_str = json.dumps(ui_elements, indent=2)
-        prompt_parts.append(f"\nUI Elements:\n{elements_str}")
+            # Format UI elements concisely
+            elements_str = json.dumps(ui_elements, indent=2)
+            prompt_parts.append(f"\nUI Elements:\n{elements_str}")
 
-        if previous_actions:
-            actions_str = json.dumps(previous_actions, indent=2)
-            prompt_parts.append(f"\nActions already taken:\n{actions_str}")
+            if previous_actions:
+                actions_str = json.dumps(previous_actions, indent=2)
+                prompt_parts.append(f"\nActions already taken:\n{actions_str}")
 
-        prompt_parts.append("\nCreate a plan to complete this task.<|im_end|>")
-        prompt_parts.append("<|im_start|>assistant\n")
+            prompt_parts.append("\nCreate a plan to complete this task.<|im_end|>")
+            prompt_parts.append("<|im_start|>assistant\n")
 
-        prompt = "\n".join(prompt_parts)
+            prompt = "\n".join(prompt_parts)
 
-        # Generate
-        result = self._generate(prompt)
+            # Generate
+            result = self._generate(prompt)
 
-        # Parse the plan from response
-        plan = self._parse_plan(result.text, task)
+            # Parse the plan from response
+            plan = self._parse_plan(result.text, task)
 
-        return PlanningResult(plan=plan, raw_response=result.text, generation=result)
+            # Record trace data
+            trace_result["plan_steps"] = len(plan.steps)
+            trace_result["plan_goal"] = plan.goal
+            trace_result["generation_time_ms"] = result.generation_time_ms
+            trace_result["raw_output"] = result.text
+
+            return PlanningResult(plan=plan, raw_response=result.text, generation=result)
 
     def _parse_plan(self, response: str, task: str) -> Plan:
         """Parse a Plan from the model's JSON response."""
@@ -111,11 +132,19 @@ class BigModel(BaseModel):
 
                 steps = []
                 for i, step_data in enumerate(data.get("steps", [])):
+                    # Parse target_index as integer
+                    target_index = step_data.get("target_index")
+                    if target_index is not None:
+                        try:
+                            target_index = int(target_index)
+                        except (ValueError, TypeError):
+                            target_index = None
+
                     steps.append(
                         PlanStep(
                             index=i,
                             action=step_data.get("action", "tap"),
-                            target_id=step_data.get("target_id"),
+                            target_index=target_index,
                             target_description=step_data.get("target_description", ""),
                             input_text=step_data.get("input_text"),
                             direction=step_data.get("direction"),

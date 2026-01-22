@@ -33,6 +33,18 @@ Hierarchical agent architecture for Android GUI automation, using a big model (p
                              └─────────────────────┘
 ```
 
+## Jeeves Accessibility Service
+
+The project includes **Jeeves**, a custom Android app that provides:
+- Bounding box overlays for UI elements
+- Accessibility service for element detection
+- ContentProvider API for querying UI state
+
+Jeeves is **automatically installed and configured** when you run the benchmark - no manual setup required in the emulator UI. The setup script handles:
+1. APK installation via ADB
+2. Accessibility service enablement via `adb shell settings put`
+3. Overlay permission granting via `adb shell appops`
+
 ## Quick Start
 
 ### 1. Prerequisites
@@ -96,32 +108,26 @@ uv run python scripts/test_models.py
 ~/Library/Android/sdk/emulator/emulator -avd AndroidWorldAvd -grpc 8554
 ```
 
-### 7. Run AndroidWorld Setup (First Time Only)
-
-```bash
-# This installs required apps and configures the emulator
-uv run python -c "
-from android_world.env import android_world_controller
-ctrl = android_world_controller.AndroidWorldController(
-    avd_name='AndroidWorldAvd',
-    grpc_port=8554,
-)
-ctrl.setup_emulator()
-"
-```
-
-### 8. Run Benchmark
+### 7. Run Benchmark
 
 ```bash
 # Dry run (test setup without running tasks)
 uv run python scripts/run_benchmark.py --dry-run
 
 # Run specific task
-uv run python scripts/run_benchmark.py --task "OpenSettings"
+uv run python scripts/run_benchmark.py --task SystemBrightnessMax --output results.json
 
 # Run all tasks
 uv run python scripts/run_benchmark.py --output results.json
+
+# Skip Jeeves setup (for debugging)
+uv run python scripts/run_benchmark.py --task SystemBrightnessMax --skip-jeeves
 ```
+
+On first run, the benchmark script will automatically:
+1. Install and configure Jeeves on the emulator
+2. Enable the accessibility service
+3. Grant overlay permissions
 
 ## Configuration
 
@@ -155,8 +161,14 @@ BigModelLittleModel/
 │   │   └── plan.py          # Plan data structures
 │   ├── android/
 │   │   └── actions.py       # Action execution
+│   ├── tracing/             # Phoenix observability
+│   │   ├── setup.py         # Phoenix initialization
+│   │   └── spans.py         # Span helpers
 │   └── benchmark/
 │       └── agent.py         # AndroidWorld integration
+├── jeeves/                   # Android accessibility app
+│   ├── app/src/main/        # Android source code
+│   └── setup_jeeves.py      # Auto-setup script
 ├── configs/
 │   └── default.yaml         # Configuration
 └── scripts/
@@ -216,3 +228,54 @@ uv run pytest
 - Ensure you're using 4-bit quantized models
 - Close other GPU-intensive applications
 - Profile with `scripts/profile_latency.py`
+
+### Jeeves setup fails
+- Check ADB connection: `adb devices`
+- Manual test: `uv run python jeeves/setup_jeeves.py`
+- Force reinstall: `uv run python jeeves/setup_jeeves.py --force`
+- If APK not built, build it manually:
+  ```bash
+  cd jeeves
+  ./gradlew assembleDebug
+  ```
+
+## Tracing with Phoenix
+
+The project includes optional Phoenix tracing to visualize what the models are thinking at each step.
+
+### Setup
+
+```bash
+# Install tracing dependencies
+uv sync --extra tracing
+```
+
+### Usage
+
+```bash
+# Run with tracing enabled
+uv run python scripts/run_benchmark.py --task SystemBrightnessMax --enable-tracing
+```
+
+This will:
+1. Start a local Phoenix server
+2. Open Phoenix UI at http://localhost:6006
+3. Record traces for all model calls and actions
+
+### What Gets Traced
+
+| Component | Attributes |
+|-----------|------------|
+| Big Model (planner) | prompt, plan output, generation_time_ms |
+| Small Model (executor) | current_step, action chosen, confidence |
+| Actions | action_type, target_id, success/failure, duration |
+| Tasks | goal, steps taken, final score, elapsed time |
+
+### Standalone Phoenix
+
+You can also run Phoenix standalone to view past traces:
+
+```bash
+uv run phoenix serve
+# Then open http://localhost:6006
+```

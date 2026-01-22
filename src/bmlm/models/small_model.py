@@ -6,6 +6,7 @@ from enum import Enum
 
 from bmlm.models.base import BaseModel, GenerationResult, ModelConfig
 from bmlm.orchestrator.plan import Plan, PlanStep
+from bmlm.tracing import trace_small_model
 
 
 class Confidence(Enum):
@@ -19,8 +20,7 @@ class ExecutionDecision:
     """Decision from the small model about what action to take."""
 
     action: str
-    target_id: str | None
-    target_coords: tuple[int, int] | None  # Fallback if ID not found
+    target_index: int | None  # Jeeves element index (matches overlay numbers)
     input_text: str | None
     direction: str | None
     confidence: Confidence
@@ -35,18 +35,17 @@ EXECUTOR_SYSTEM_PROMPT = """You are an Android GUI executor agent. Your role is 
 You will receive:
 1. The current plan step to execute
 2. The overall goal
-3. A list of current UI elements with their IDs
+3. A list of UI elements with their INDEX numbers (these match the numbered overlays on screen)
 
 Your job is to:
-1. Find the best matching UI element for the current step
+1. Find the best matching UI element by its INDEX
 2. Decide the exact action to take
 3. Report your confidence level
 
 Output JSON:
 {
     "action": "tap|type|swipe|scroll|long_press|navigate_home|navigate_back|wait",
-    "target_id": "element_id or null",
-    "target_coords": [x, y] or null,
+    "target_index": 5,
     "input_text": "text to type or null",
     "direction": "up|down|left|right or null",
     "confidence": "high|medium|low",
@@ -54,8 +53,15 @@ Output JSON:
     "needs_replanning": false
 }
 
+IMPORTANT:
+- target_index must be an INTEGER matching an element's index from the list
+- For tap/long_press: set target_index to the element you want to interact with
+- For swipe/scroll: set direction, target_index is optional
+- For type: set input_text, target_index is optional (types in focused field)
+- For navigate_home/navigate_back/wait: no target_index needed
+
 Set needs_replanning=true if:
-- You cannot find any matching element
+- You cannot find any matching element for the current step
 - The screen state doesn't match expectations
 - You're very uncertain about what to do
 
@@ -81,42 +87,65 @@ class SmallModel(BaseModel):
         Args:
             current_step: The step to execute
             plan: The full plan for context
-            ui_elements: Current UI elements on screen
+            ui_elements: Current UI elements with Jeeves indices
             recent_actions: Recent actions taken (for context)
 
         Returns:
             ExecutionDecision with the concrete action to take
         """
-        prompt_parts = [
-            f"<|im_start|>system\n{self.system_prompt}<|im_end|>",
-            "<|im_start|>user",
-            f"Goal: {plan.goal}",
-            f"\nCurrent step ({current_step.index + 1}/{len(plan.steps)}):",
-            f"  Action: {current_step.action}",
-            f"  Target: {current_step.target_description}",
-        ]
+        with trace_small_model(
+            current_step=current_step.target_description or current_step.action,
+            step_index=current_step.index,
+            ui_elements_count=len(ui_elements),
+            model_path=self.config.model_path,
+            recent_actions_count=len(recent_actions) if recent_actions else 0,
+        ) as trace_result:
+            prompt_parts = [
+                f"<|im_start|>system\n{self.system_prompt}<|im_end|>",
+                "<|im_start|>user",
+                f"Goal: {plan.goal}",
+                f"\nCurrent step ({current_step.index + 1}/{len(plan.steps)}):",
+                f"  Action: {current_step.action}",
+                f"  Target: {current_step.target_description}",
+            ]
 
-        if current_step.target_id:
-            prompt_parts.append(f"  Expected ID: {current_step.target_id}")
-        if current_step.input_text:
-            prompt_parts.append(f"  Text to type: {current_step.input_text}")
-        if current_step.expected_result:
-            prompt_parts.append(f"  Expected result: {current_step.expected_result}")
+            if current_step.target_index is not None:
+                prompt_parts.append(f"  Expected element index: {current_step.target_index}")
+            if current_step.input_text:
+                prompt_parts.append(f"  Text to type: {current_step.input_text}")
+            if current_step.expected_result:
+                prompt_parts.append(f"  Expected result: {current_step.expected_result}")
 
-        # Format UI elements
-        elements_str = json.dumps(ui_elements, indent=2)
-        prompt_parts.append(f"\nCurrent UI Elements:\n{elements_str}")
+            # Format UI elements with indices prominently
+            prompt_parts.append("\nUI Elements (index: description):")
+            for elem in ui_elements:
+                idx = elem.get("index", "?")
+                text = elem.get("text", "")
+                desc = elem.get("content_desc", "")
+                elem_type = elem.get("type", "Unknown")
+                label = text or desc or elem_type
+                prompt_parts.append(f"  [{idx}] {label} ({elem_type})")
 
-        if recent_actions:
-            prompt_parts.append(f"\nRecent actions: {json.dumps(recent_actions[-3:])}")
+            if recent_actions:
+                prompt_parts.append(f"\nRecent actions: {json.dumps(recent_actions[-3:])}")
 
-        prompt_parts.append("\nDecide the exact action to execute.<|im_end|>")
-        prompt_parts.append("<|im_start|>assistant\n")
+            prompt_parts.append("\nDecide the exact action to execute.<|im_end|>")
+            prompt_parts.append("<|im_start|>assistant\n")
 
-        prompt = "\n".join(prompt_parts)
-        result = self._generate(prompt)
+            prompt = "\n".join(prompt_parts)
+            result = self._generate(prompt)
 
-        return self._parse_decision(result)
+            decision = self._parse_decision(result)
+
+            # Record trace data
+            trace_result["action"] = decision.action
+            trace_result["target_index"] = decision.target_index
+            trace_result["confidence"] = decision.confidence.value
+            trace_result["needs_replanning"] = decision.needs_replanning
+            trace_result["generation_time_ms"] = result.generation_time_ms
+            trace_result["raw_output"] = result.text
+
+            return decision
 
     def _parse_decision(self, result: GenerationResult) -> ExecutionDecision:
         """Parse an ExecutionDecision from the model response."""
@@ -127,19 +156,20 @@ class SmallModel(BaseModel):
             if json_start >= 0 and json_end > json_start:
                 data = json.loads(response[json_start:json_end])
 
-                coords = data.get("target_coords")
-                if coords and isinstance(coords, list) and len(coords) == 2:
-                    coords = tuple(coords)
-                else:
-                    coords = None
+                # Parse target_index as integer
+                target_index = data.get("target_index")
+                if target_index is not None:
+                    try:
+                        target_index = int(target_index)
+                    except (ValueError, TypeError):
+                        target_index = None
 
                 confidence_str = data.get("confidence", "medium").lower()
                 confidence = Confidence(confidence_str) if confidence_str in ["high", "medium", "low"] else Confidence.MEDIUM
 
                 return ExecutionDecision(
                     action=data.get("action", "wait"),
-                    target_id=data.get("target_id"),
-                    target_coords=coords,
+                    target_index=target_index,
                     input_text=data.get("input_text"),
                     direction=data.get("direction"),
                     confidence=confidence,
@@ -154,8 +184,7 @@ class SmallModel(BaseModel):
         # Fallback: safe wait action
         return ExecutionDecision(
             action="wait",
-            target_id=None,
-            target_coords=None,
+            target_index=None,
             input_text=None,
             direction=None,
             confidence=Confidence.LOW,

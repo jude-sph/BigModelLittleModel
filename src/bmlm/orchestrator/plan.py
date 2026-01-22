@@ -19,7 +19,7 @@ class PlanStep:
     index: int
     action: str  # tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait
     target_description: str
-    target_id: str | None = None
+    target_index: int | None = None  # Jeeves element index (matches overlay numbers)
     input_text: str | None = None
     direction: str | None = None  # up, down, left, right
     expected_result: str = ""

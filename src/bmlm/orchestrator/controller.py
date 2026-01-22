@@ -46,7 +46,7 @@ class StepResult:
 
     success: bool
     action_taken: str
-    target_id: str | None
+    target_index: int | None  # Jeeves element index
     duration_ms: float
     triggered_replan: bool = False
     trigger_reason: TriggerReason | None = None
@@ -142,7 +142,7 @@ class Orchestrator:
             return StepResult(
                 success=True,
                 action_taken="none",
-                target_id=None,
+                target_index=None,
                 duration_ms=0,
                 triggered_replan=False,
             )
@@ -153,7 +153,7 @@ class Orchestrator:
             return StepResult(
                 success=True,
                 action_taken="plan_complete",
-                target_id=None,
+                target_index=None,
                 duration_ms=0,
             )
 
@@ -178,7 +178,7 @@ class Orchestrator:
             return StepResult(
                 success=True,
                 action_taken="replan",
-                target_id=None,
+                target_index=None,
                 duration_ms=duration_ms,
                 triggered_replan=True,
                 trigger_reason=trigger_reason,
@@ -187,8 +187,7 @@ class Orchestrator:
         # Execute the action
         action_dict = {
             "action": decision.action,
-            "target_id": decision.target_id,
-            "target_coords": decision.target_coords,
+            "target_index": decision.target_index,
             "input_text": decision.input_text,
             "direction": decision.direction,
         }
@@ -215,7 +214,7 @@ class Orchestrator:
         log.info(
             "step_executed",
             action=decision.action,
-            target=decision.target_id,
+            target_index=decision.target_index,
             success=success,
             confidence=decision.confidence.value,
             duration_ms=round(duration_ms, 2),
@@ -224,7 +223,7 @@ class Orchestrator:
         return StepResult(
             success=success,
             action_taken=decision.action,
-            target_id=decision.target_id,
+            target_index=decision.target_index,
             duration_ms=duration_ms,
         )
 

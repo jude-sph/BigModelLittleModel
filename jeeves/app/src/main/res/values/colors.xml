@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="purple_200">#FFBB86FC</color>
+    <color name="purple_500">#FF6200EE</color>
+    <color name="purple_700">#FF3700B3</color>
+    <color name="teal_200">#FF03DAC5</color>
+    <color name="teal_700">#FF018786</color>
+    <color name="black">#FF000000</color>
+    <color name="white">#FFFFFFFF</color>
+    
+    <!-- Ask Jeeves brand colors -->
+    <color name="ask_jeeves_red">#ff7777</color>
+    <color name="ask_jeeves_yellow">#ffdeb5</color>
+    <color name="ask_jeeves_background">#F5F5DC</color>
+    <color name="ask_jeeves_text">#000000</color>
+    
+    <!-- UI element colors -->
+    <color name="droidrun_divider">#3C5A4F</color>
+    <color name="droidrun_shadow">#20000000</color>
+    <color name="droidrun_ripple">#3300E5B9</color>
+    <color name="droidrun_error">#FF5252</color>
+    <color name="droidrun_success">#00E676</color>
+    <color name="droidrun_warning">#FFD740</color>
+    <color name="droidrun_disabled">#757575</color>
+</resources>

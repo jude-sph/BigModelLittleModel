@@ -3,12 +3,16 @@
 
 import argparse
 import json
+import logging
 import sys
 import time
 from pathlib import Path
 
 import structlog
 import yaml
+
+# Add project root to path for jeeves import
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 # Configure logging
 structlog.configure(
@@ -25,6 +29,34 @@ def load_config(config_path: str) -> dict:
     """Load configuration from YAML file."""
     with open(config_path) as f:
         return yaml.safe_load(f)
+
+
+def setup_jeeves(config: dict) -> bool:
+    """Set up Jeeves accessibility service on the emulator.
+
+    Args:
+        config: Configuration dictionary
+
+    Returns:
+        True if Jeeves is ready, False otherwise
+    """
+    from jeeves.setup_jeeves import JeevesAutoSetup
+
+    log.info("setting_up_jeeves")
+
+    # Configure logging for jeeves module
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
+
+    device_serial = config["android"].get("adb_serial", "emulator-5554")
+    setup = JeevesAutoSetup(device_serial=device_serial)
+
+    if setup.ensure_jeeves_ready(force_reinstall=False):
+        log.info("jeeves_ready")
+        setup.enable_overlay_visibility()
+        return True
+    else:
+        log.warning("jeeves_setup_failed", message="Continuing without Jeeves")
+        return False
 
 
 def setup_environment(config: dict):
@@ -171,6 +203,16 @@ def main():
         action="store_true",
         help="Just load models and exit (test setup)",
     )
+    parser.add_argument(
+        "--skip-jeeves",
+        action="store_true",
+        help="Skip Jeeves setup (for testing without bounding boxes)",
+    )
+    parser.add_argument(
+        "--no-tracing",
+        action="store_true",
+        help="Disable Phoenix tracing (tracing is ON by default)",
+    )
 
     args = parser.parse_args()
 
@@ -182,6 +224,27 @@ def main():
 
     config = load_config(config_path)
     log.info("config_loaded", path=str(config_path))
+
+    # Initialize tracing (enabled by default)
+    tracing_enabled = False
+    if not args.no_tracing:
+        try:
+            from bmlm.tracing import init_tracing
+            if init_tracing(project_name="bmlm"):
+                log.info("tracing_enabled", url="http://localhost:6006")
+                tracing_enabled = True
+            else:
+                log.warning("tracing_init_failed")
+        except ImportError:
+            log.warning("tracing_not_available", message="Install with: uv sync --extra tracing")
+
+    # Set up Jeeves accessibility service (for bounding box overlays)
+    if not args.skip_jeeves:
+        try:
+            setup_jeeves(config)
+        except Exception as e:
+            log.warning("jeeves_setup_error", error=str(e))
+            log.info("continuing_without_jeeves")
 
     # Set up environment
     try:
@@ -220,12 +283,38 @@ def main():
         else:
             tasks = list(task_dict.items())
 
+    # Import trace_task if tracing is enabled
+    trace_task_cm = None
+    if tracing_enabled:
+        try:
+            from bmlm.tracing import trace_task
+            trace_task_cm = trace_task
+        except ImportError:
+            pass
+
     # Run tasks
     results = []
     for task_name, task_class in tasks:
         try:
             agent.reset()
-            result = run_task(agent, task_name, task_class, env, args.max_steps)
+
+            # Wrap task in tracing if enabled
+            if trace_task_cm:
+                # Get goal early for tracing
+                params = task_class.generate_random_params()
+                temp_task = task_class(params)
+                goal = temp_task.goal
+
+                with trace_task_cm(task_name, goal, args.max_steps) as trace_result:
+                    result = run_task(agent, task_name, task_class, env, args.max_steps)
+                    trace_result["success"] = result.get("success", False)
+                    trace_result["score"] = 1.0 if result.get("success") else 0.0
+                    trace_result["steps"] = result.get("steps", 0)
+                    trace_result["replans"] = result.get("replans", 0)
+                    trace_result["elapsed_s"] = result.get("elapsed_s", 0)
+            else:
+                result = run_task(agent, task_name, task_class, env, args.max_steps)
+
             results.append(result)
         except Exception as e:
             log.error("task_failed", task=task_name, error=str(e))
@@ -256,6 +345,14 @@ def main():
 
     # Cleanup
     agent.unload_models()
+
+    # Shutdown tracing
+    if tracing_enabled:
+        try:
+            from bmlm.tracing import shutdown_tracing
+            shutdown_tracing()
+        except ImportError:
+            pass
 
     return 0 if success_count == total else 1
 
