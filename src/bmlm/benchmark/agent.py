@@ -99,21 +99,29 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
         self._task_started = False
         log.info("task_set", task=task)
 
-    def step(self) -> base_agent.AgentInteractionResult:
+    def step(self, goal: str) -> base_agent.AgentInteractionResult:
         """Execute one step of the agent.
 
         This is called by AndroidWorld in a loop until the task is complete
         or max steps are reached.
 
+        Args:
+            goal: The task goal (passed by AndroidWorld on each step)
+
         Returns:
             AgentInteractionResult with action taken and completion status
         """
+        # Update task if provided and different
+        if goal and goal != self._current_task:
+            self._current_task = goal
+            self._task_started = False
+
         # Start task on first step
         if not self._task_started:
             if not self._current_task:
                 return base_agent.AgentInteractionResult(
                     done=True,
-                    output="No task set",
+                    data={"output": "No task set"},
                 )
             self.orchestrator.start_task(self._current_task)
             self._task_started = True
@@ -123,7 +131,10 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
             stats = self.orchestrator.get_stats()
             return base_agent.AgentInteractionResult(
                 done=True,
-                output=f"Task completed. Steps: {stats['total_steps']}, Replans: {stats['total_replans']}",
+                data={
+                    "output": f"Task completed. Steps: {stats['total_steps']}, Replans: {stats['total_replans']}",
+                    "stats": stats,
+                },
             )
 
         # Execute one step
@@ -138,7 +149,13 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
 
         return base_agent.AgentInteractionResult(
             done=False,
-            output=output,
+            data={
+                "output": output,
+                "action": result.action_taken,
+                "target_id": result.target_id,
+                "success": result.success,
+                "duration_ms": result.duration_ms,
+            },
         )
 
     def reset(self) -> None:

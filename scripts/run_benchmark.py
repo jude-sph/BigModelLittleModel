@@ -31,24 +31,25 @@ def setup_environment(config: dict):
     """Set up AndroidWorld environment.
 
     Returns:
-        Tuple of (controller, task_registry)
+        Tuple of (env, task_registry)
     """
-    from android_world.env.android_world_controller import get_controller
+    from android_world.env import env_launcher
     from android_world.registry import TaskRegistry
 
     log.info("setting_up_environment")
 
-    # Create controller using get_controller helper
-    controller = get_controller(
+    # Create AsyncEnv using env_launcher (this is what tasks expect)
+    env = env_launcher.load_and_setup_env(
         console_port=5554,  # Default emulator console port
         adb_path=config["android"].get("adb_path", "~/Library/Android/sdk/platform-tools/adb"),
         grpc_port=config["android"]["grpc_port"],
+        emulator_setup=False,  # Don't run setup again
     )
 
     # Get task registry
     task_reg = TaskRegistry()
 
-    return controller, task_reg
+    return env, task_reg
 
 
 def create_agent(env, config: dict):
@@ -69,31 +70,42 @@ def create_agent(env, config: dict):
     return agent
 
 
-def run_task(agent, task, max_steps: int) -> dict:
+def run_task(agent, task_name: str, task_class, env, max_steps: int) -> dict:
     """Run a single task and return results.
 
     Args:
         agent: BMLM agent
-        task: AndroidWorld task
+        task_name: Name of the task
+        task_class: AndroidWorld task class
+        env: AndroidWorld environment/controller
         max_steps: Maximum steps allowed
 
     Returns:
         Dict with task results
     """
-    task_name = task.name if hasattr(task, "name") else str(task)
     log.info("starting_task", task=task_name)
+
+    # Instantiate task with random params
+    params = task_class.generate_random_params()
+    task = task_class(params)
+
+    # Initialize the task on device
+    log.info("initializing_task", task=task_name)
+    task.initialize_task(env)
 
     start_time = time.perf_counter()
 
-    # Set task on agent
-    agent.set_task(task.goal if hasattr(task, "goal") else str(task))
+    # Get the goal and set it on the agent
+    goal = task.goal
+    log.info("task_goal", goal=goal)
+    agent.set_task(goal)
 
     # Run until done or max steps
     steps = 0
     done = False
 
     while not done and steps < max_steps:
-        result = agent.step()
+        result = agent.step(goal)
         steps += 1
         done = result.done
 
@@ -102,18 +114,20 @@ def run_task(agent, task, max_steps: int) -> dict:
 
     elapsed = time.perf_counter() - start_time
 
-    # Check success (task-specific evaluation)
+    # Check success using task's evaluation
     success = False
-    if hasattr(task, "evaluate"):
-        try:
-            success = task.evaluate()
-        except Exception as e:
-            log.warning("evaluation_failed", error=str(e))
+    try:
+        success_score = task.is_successful(env)
+        success = success_score > 0.5  # Threshold for success
+        log.info("task_evaluated", score=success_score)
+    except Exception as e:
+        log.warning("evaluation_failed", error=str(e))
 
     stats = agent.orchestrator.get_stats()
 
     result = {
         "task": task_name,
+        "goal": goal,
         "success": success,
         "steps": steps,
         "replans": stats["total_replans"],
@@ -191,26 +205,32 @@ def main():
         return 0
 
     # Get tasks to run
+    # Get the task registry dictionary for AndroidWorld tasks
+    task_dict = task_registry.get_registry(task_registry.ANDROID_WORLD_FAMILY)
+
     if args.task:
-        tasks = [task_registry.get(args.task)]
+        if args.task not in task_dict:
+            log.error("task_not_found", task=args.task, available=list(task_dict.keys())[:10])
+            return 1
+        tasks = [(args.task, task_dict[args.task])]
     else:
         task_filter = config["benchmark"].get("task_filter", [])
         if task_filter:
-            tasks = [task_registry.get(t) for t in task_filter]
+            tasks = [(t, task_dict[t]) for t in task_filter if t in task_dict]
         else:
-            tasks = list(task_registry.get_all())
+            tasks = list(task_dict.items())
 
     # Run tasks
     results = []
-    for task in tasks:
+    for task_name, task_class in tasks:
         try:
             agent.reset()
-            result = run_task(agent, task, args.max_steps)
+            result = run_task(agent, task_name, task_class, env, args.max_steps)
             results.append(result)
         except Exception as e:
-            log.error("task_failed", task=str(task), error=str(e))
+            log.error("task_failed", task=task_name, error=str(e))
             results.append({
-                "task": str(task),
+                "task": task_name,
                 "success": False,
                 "error": str(e),
             })

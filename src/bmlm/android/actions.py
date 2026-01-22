@@ -150,10 +150,9 @@ class ActionExecutor:
             log.warning("tap_no_coords", target_id=target_id)
             return False
 
-        # Use AndroidWorld's tap action
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, CLICK
 
-        action = interface.Tap(x=coords[0], y=coords[1])
+        action = JSONAction(action_type=CLICK, x=coords[0], y=coords[1])
         self.env.execute_action(action)
         return True
 
@@ -166,83 +165,64 @@ class ActionExecutor:
             log.warning("long_press_no_coords", target_id=target_id)
             return False
 
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, LONG_PRESS
 
-        action = interface.LongPress(x=coords[0], y=coords[1])
+        action = JSONAction(action_type=LONG_PRESS, x=coords[0], y=coords[1])
         self.env.execute_action(action)
         return True
 
     def _type_text(self, text: str) -> bool:
         """Type text into the focused field."""
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, INPUT_TEXT
 
-        action = interface.Type(text=text)
+        action = JSONAction(action_type=INPUT_TEXT, text=text)
         self.env.execute_action(action)
         return True
 
     def _swipe(self, direction: str) -> bool:
         """Execute a swipe action."""
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, SWIPE
 
-        # Define swipe vectors based on direction
-        # Assuming 1080x2400 screen
-        center_x, center_y = 540, 1200
-        distance = 500
-
-        direction_map = {
-            "up": (center_x, center_y, center_x, center_y - distance),
-            "down": (center_x, center_y, center_x, center_y + distance),
-            "left": (center_x, center_y, center_x - distance, center_y),
-            "right": (center_x, center_y, center_x + distance, center_y),
-        }
-
-        if direction not in direction_map:
-            direction = "up"
-
-        start_x, start_y, end_x, end_y = direction_map[direction]
-        action = interface.Swipe(
-            start_x=start_x, start_y=start_y, end_x=end_x, end_y=end_y
-        )
+        action = JSONAction(action_type=SWIPE, direction=direction)
         self.env.execute_action(action)
         return True
 
     def _scroll(self, direction: str) -> bool:
-        """Execute a scroll action (similar to swipe but typically slower)."""
-        from android_world.env import interface
+        """Execute a scroll action."""
+        from android_world.env.json_action import JSONAction, SCROLL
 
-        # Scroll is often just a slower/shorter swipe
-        scroll_direction = "down" if direction in ["down", "up"] else direction
-        action = interface.Scroll(direction=scroll_direction)
+        action = JSONAction(action_type=SCROLL, direction=direction)
         self.env.execute_action(action)
         return True
 
     def _navigate_home(self) -> bool:
         """Navigate to home screen."""
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, NAVIGATE_HOME
 
-        action = interface.NavigateHome()
+        action = JSONAction(action_type=NAVIGATE_HOME)
         self.env.execute_action(action)
         return True
 
     def _navigate_back(self) -> bool:
         """Navigate back."""
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, NAVIGATE_BACK
 
-        action = interface.NavigateBack()
+        action = JSONAction(action_type=NAVIGATE_BACK)
         self.env.execute_action(action)
         return True
 
     def _wait(self, duration_ms: int = 1000) -> bool:
         """Wait for a specified duration."""
-        import time
+        from android_world.env.json_action import JSONAction, WAIT
 
-        time.sleep(duration_ms / 1000)
+        action = JSONAction(action_type=WAIT)
+        self.env.execute_action(action)
         return True
 
     def _open_app(self, app_name: str) -> bool:
         """Open an app by name."""
-        from android_world.env import interface
+        from android_world.env.json_action import JSONAction, OPEN_APP
 
-        action = interface.OpenApp(app_name=app_name)
+        action = JSONAction(action_type=OPEN_APP, app_name=app_name)
         self.env.execute_action(action)
         return True
