@@ -142,8 +142,8 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
 
         # Build output message
         output = f"Action: {result.action_taken}"
-        if result.target_id:
-            output += f" on {result.target_id}"
+        if result.target_index is not None:
+            output += f" on element [{result.target_index}]"
         if result.triggered_replan:
             output += f" (triggered replan: {result.trigger_reason.value if result.trigger_reason else 'unknown'})"
 
@@ -152,7 +152,7 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
             data={
                 "output": output,
                 "action": result.action_taken,
-                "target_id": result.target_id,
+                "target_index": result.target_index,
                 "success": result.success,
                 "duration_ms": result.duration_ms,
             },
