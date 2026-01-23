@@ -20,31 +20,27 @@ class PlanningResult:
     generation: GenerationResult
 
 
-PLANNING_SYSTEM_PROMPT = """You are an Android GUI automation planner. You can see the screen with numbered UI elements.
+PLANNING_SYSTEM_PROMPT_TEMPLATE = """You are an Android GUI planner. Look at the screenshot and plan the next {max_steps} steps toward the goal.
 
-Look at the screenshot to understand:
-1. What screen am I on? What app?
-2. What elements are visible? (Numbers show clickable elements)
-3. What sequence of actions reaches the goal?
+RULES:
+- Output exactly 1-{max_steps} steps. Each step must be DIFFERENT.
+- target_description = what you interact with NOW (not the end goal)
+- Use target_index from screenshot if visible, null if not
+- Output raw JSON only, no markdown
 
-Output ONLY a JSON plan:
-{"goal": "...", "steps": [
-  {"action": "tap", "target_index": 5, "target_description": "Settings icon", "expected_result": "Settings opens"},
-  ...
-], "success_indicator": "..."}
+Example:
+{{"goal": "Set brightness max", "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "top of screen", "expected_result": "Quick settings opens"}}], "success_indicator": "Brightness at max"}}
 
-Use target_index numbers from the screenshot. Each step should advance toward the goal.
-
-Action types: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait
-Plan 3-7 steps. For swipe/scroll, include "direction": "up/down/left/right"."""
+Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
 
 
 class BigModel(VisionModel):
     """Vision-language planner model that creates multi-step action plans."""
 
-    def __init__(self, config: ModelConfig):
+    def __init__(self, config: ModelConfig, max_plan_steps: int = 3):
         super().__init__(config)
-        self.system_prompt = PLANNING_SYSTEM_PROMPT
+        self.max_plan_steps = max_plan_steps
+        self.system_prompt = PLANNING_SYSTEM_PROMPT_TEMPLATE.format(max_steps=max_plan_steps)
 
     def generate(
         self,
@@ -128,6 +124,12 @@ class BigModel(VisionModel):
     def _parse_plan(self, response: str, task: str) -> Plan:
         """Parse a Plan from the model's JSON response."""
         try:
+            # Strip markdown code blocks if present
+            if "```json" in response:
+                response = response.split("```json")[1].split("```")[0]
+            elif "```" in response:
+                response = response.split("```")[1].split("```")[0]
+
             # Find JSON in response
             json_start = response.find("{")
             json_end = response.rfind("}") + 1

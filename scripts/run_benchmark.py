@@ -95,6 +95,7 @@ def create_agent(env, config: dict):
         big_model_max_tokens=config["models"]["big"]["max_tokens"],
         small_model_max_tokens=config["models"]["small"]["max_tokens"],
         temperature=config["models"]["big"]["temperature"],
+        max_plan_steps=config["orchestrator"]["max_plan_steps"],
         max_steps_without_replan=config["orchestrator"]["max_steps_without_replan"],
         wait_after_action_ms=config["orchestrator"]["wait_after_action_ms"],
     )

@@ -5,8 +5,8 @@ models:
   big:
     # Qwen2.5-VL-7B for planning (vision-language model)
     path: "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-    max_tokens: 1024
-    temperature: 0.7
+    max_tokens: 800
+    temperature: 0.3
     top_p: 0.9
 
   small:
@@ -22,6 +22,9 @@ models:
 
 # Orchestrator settings
 orchestrator:
+  # Maximum steps per plan (shorter = more focused, replan as needed)
+  max_plan_steps: 3
+
   # Trigger big model after this many small model steps
   max_steps_without_replan: 10
 

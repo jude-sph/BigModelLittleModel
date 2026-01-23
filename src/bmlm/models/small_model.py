@@ -129,6 +129,13 @@ class SmallModel(BaseModel):
         """Parse an ExecutionDecision from the model response."""
         # We prepend { in the prompt, so add it back for parsing
         response = "{" + result.text
+
+        # Strip markdown code blocks if present
+        if "```json" in response:
+            response = "{" + response.split("```json")[1].split("```")[0]
+        elif "```" in response:
+            response = "{" + response.split("```")[1].split("```")[0]
+
         try:
             json_start = response.find("{")
             json_end = response.rfind("}") + 1

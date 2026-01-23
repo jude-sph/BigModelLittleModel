@@ -30,6 +30,7 @@ class BMLMAgentConfig:
     temperature: float = 0.7
 
     # Orchestrator settings
+    max_plan_steps: int = 3
     max_steps_without_replan: int = 10
     wait_after_action_ms: int = 500
 
@@ -63,7 +64,7 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
             temperature=self.config.temperature,
         )
 
-        self.big_model = BigModel(big_model_config)
+        self.big_model = BigModel(big_model_config, max_plan_steps=self.config.max_plan_steps)
         self.small_model = SmallModel(small_model_config)
 
         # Initialize orchestrator
