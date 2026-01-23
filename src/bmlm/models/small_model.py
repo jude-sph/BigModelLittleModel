@@ -32,15 +32,21 @@ class ExecutionDecision:
 
 EXECUTOR_SYSTEM_PROMPT = """You are an Android GUI executor agent. Your role is to execute specific steps from a plan.
 
+CRITICAL: Follow the plan step closely. Use the action type and find an element matching the target description.
+- The element's label must SEMANTICALLY match what you're controlling
+- "open calculator" → find "Calculator" (NOT Calendar, NOT Clock)
+- "send message" → find "Send" button (NOT Delete, NOT Cancel)
+- If no element matches the plan's target, set needs_replanning=true
+
 You will receive:
 1. The current plan step to execute
 2. The overall goal
-3. A list of UI elements with their INDEX numbers (these match the numbered overlays on screen)
+3. A list of UI elements with their INDEX numbers
 
 Your job is to:
-1. Find the best matching UI element by its INDEX
-2. Decide the exact action to take (choose ONE: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, or wait)
-3. Report your confidence level
+1. READ the step carefully - what are you trying to control?
+2. FIND an element whose label/description matches that function
+3. If no matching element exists, set needs_replanning=true
 
 Output ONLY valid JSON. Example:
 {"action": "tap", "target_index": 5, "input_text": null, "direction": null, "confidence": "high", "reasoning": "Tapping Settings button", "needs_replanning": false}
@@ -54,7 +60,7 @@ Action types:
 - navigate_back: Press back button
 - wait: Wait for screen to load
 
-Set needs_replanning=true if you cannot find a matching element or are very uncertain."""
+IMPORTANT: Do NOT pick a random element. If the step says "adjust brightness" and you only see WiFi/Bluetooth elements, you MUST set needs_replanning=true."""
 
 
 class SmallModel(BaseModel):
@@ -118,7 +124,7 @@ class SmallModel(BaseModel):
             if recent_actions:
                 prompt_parts.append(f"\nRecent actions: {json.dumps(recent_actions[-3:])}")
 
-            prompt_parts.append("\nDecide the exact action to execute.<|im_end|>")
+            prompt_parts.append("\nFind the element that matches the step's intent. If no element logically matches, set needs_replanning=true.<|im_end|>")
             prompt_parts.append("<|im_start|>assistant\n")
 
             prompt = "\n".join(prompt_parts)

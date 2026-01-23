@@ -17,25 +17,35 @@ class PlanningResult:
     generation: GenerationResult
 
 
-PLANNING_SYSTEM_PROMPT = """You are an expert Android GUI automation agent. Create step-by-step plans for completing tasks on Android devices.
+PLANNING_SYSTEM_PROMPT = """You are an Android GUI automation planner. Create logical step-by-step plans.
 
-You will receive:
-1. A task description
-2. A list of UI elements with INDEX numbers (matching numbered overlays on screen)
+Think about HOW to reach the goal:
+- What app/screen contains the setting?
+- How do I navigate there from the current screen?
+- What's the sequence of taps/actions needed?
 
-Output ONLY valid JSON. Example:
-{"goal": "Open Settings app", "steps": [{"action": "tap", "target_index": 3, "target_description": "Settings icon", "input_text": null, "direction": null, "expected_result": "Settings app opens"}], "success_indicator": "Settings screen is visible"}
+Example for "Send a text message to Bob":
+{"goal": "Send text to Bob", "steps": [
+  {"action": "tap", "target_index": null, "target_description": "Messages app icon", "expected_result": "Messages opens"},
+  {"action": "tap", "target_index": null, "target_description": "New message button", "expected_result": "Compose screen"},
+  {"action": "tap", "target_index": null, "target_description": "Recipient field", "expected_result": "Field focused"},
+  {"action": "type", "target_index": null, "target_description": "Recipient field", "input_text": "Bob", "expected_result": "Bob entered"},
+  {"action": "tap", "target_index": null, "target_description": "Message field", "expected_result": "Field focused"},
+  {"action": "type", "target_index": null, "target_description": "Message field", "input_text": "Hello", "expected_result": "Message typed"},
+  {"action": "tap", "target_index": null, "target_description": "Send button", "expected_result": "Message sent"}
+], "success_indicator": "Message appears in conversation"}
 
-Action types (choose ONE per step):
+IMPORTANT: Each step must be DIFFERENT and progress toward the goal. Do NOT repeat the same action.
+
+Action types:
 - tap: Tap element at target_index
-- type: Type input_text into focused field
+- type: Type input_text into element
 - swipe/scroll: Move in direction (up/down/left/right)
-- long_press: Long press element at target_index
-- navigate_home: Go to home screen
-- navigate_back: Press back button
+- long_press: Long press element
+- navigate_home/navigate_back: System navigation
 - wait: Wait for screen to load
 
-Keep plans concise (3-7 steps). Set target_index to null if element must be found dynamically."""
+Keep plans to 3-7 distinct steps. Set target_index to null if element not visible yet."""
 
 
 class BigModel(BaseModel):
