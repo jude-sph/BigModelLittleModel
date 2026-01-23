@@ -101,8 +101,7 @@ class JeevesClient:
         """Parse ContentProvider query response into JeevesElements."""
         elements = []
 
-        # ContentProvider returns rows like: Row: 0 data={"index":0,...}
-        # Or it might return raw JSON
+        # ContentProvider returns rows like: Row: 0 result={"status":"success","message":"[...]"}
         try:
             # Try to find JSON in the response
             json_start = response.find("{")
@@ -113,14 +112,27 @@ class JeevesClient:
                 data = json.loads(json_str)
 
                 # Handle different response formats
+                tree = None
                 if "a11y_tree" in data:
                     tree = data["a11y_tree"]
-                elif "message" in data and "a11y_tree" in data["message"]:
-                    tree = data["message"]["a11y_tree"]
-                else:
+                elif "message" in data:
+                    # Message might be a JSON string that needs parsing
+                    message = data["message"]
+                    if isinstance(message, str):
+                        try:
+                            tree = json.loads(message)
+                        except json.JSONDecodeError:
+                            pass
+                    elif isinstance(message, dict) and "a11y_tree" in message:
+                        tree = message["a11y_tree"]
+                    elif isinstance(message, list):
+                        tree = message
+
+                if tree is None:
                     tree = data if isinstance(data, list) else [data]
 
-                elements = self._parse_element_tree(tree)
+                if isinstance(tree, list):
+                    elements = self._parse_element_tree(tree)
 
         except json.JSONDecodeError as e:
             log.warning("jeeves_json_parse_error", error=str(e))

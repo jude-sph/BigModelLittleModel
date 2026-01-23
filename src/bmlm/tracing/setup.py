@@ -2,6 +2,8 @@
 
 import atexit
 import logging
+import os
+import socket
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -9,6 +11,12 @@ logger = logging.getLogger(__name__)
 # Global state
 _tracer_provider = None
 _tracing_enabled = False
+_launched_server = False  # Track if we launched the server (vs connecting to existing)
+
+# Default Phoenix endpoint
+PHOENIX_HOST = "localhost"
+PHOENIX_PORT = 6006
+PHOENIX_GRPC_PORT = 4317
 
 
 def is_tracing_enabled() -> bool:
@@ -16,20 +24,39 @@ def is_tracing_enabled() -> bool:
     return _tracing_enabled
 
 
+def _is_phoenix_running(host: str = PHOENIX_HOST, port: int = PHOENIX_PORT) -> bool:
+    """Check if Phoenix server is already running."""
+    try:
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+            s.settimeout(1)
+            s.connect((host, port))
+            return True
+    except (socket.error, socket.timeout):
+        return False
+
+
 def init_tracing(
     project_name: str = "bmlm",
     endpoint: Optional[str] = None,
+    launch_server: bool = True,
 ) -> bool:
     """Initialize Phoenix tracing.
 
+    Connects to an existing Phoenix server if running, or launches one if not.
+    Data persists in ~/.phoenix between runs.
+
+    To run a persistent Phoenix server separately:
+        uv run phoenix serve
+
     Args:
         project_name: Name for the Phoenix project
-        endpoint: Phoenix endpoint (default: local Phoenix server)
+        endpoint: Phoenix endpoint (default: localhost:4317)
+        launch_server: If True, launch Phoenix if not running. If False, only connect.
 
     Returns:
         True if tracing was initialized successfully
     """
-    global _tracer_provider, _tracing_enabled
+    global _tracer_provider, _tracing_enabled, _launched_server
 
     if _tracing_enabled:
         logger.info("Tracing already initialized")
@@ -37,18 +64,27 @@ def init_tracing(
 
     try:
         import phoenix as px
-        from opentelemetry import trace
-        from opentelemetry.sdk.trace import TracerProvider
-        from opentelemetry.sdk.trace.export import BatchSpanProcessor
         from phoenix.otel import register
 
-        # Launch Phoenix in the background (opens browser by default)
-        # Use launch_app=False to just start the server without opening browser
-        session = px.launch_app()
-        logger.info(f"Phoenix UI available at: {session.url}")
+        phoenix_running = _is_phoenix_running()
 
-        # Register the tracer provider
-        _tracer_provider = register(project_name=project_name)
+        if phoenix_running:
+            logger.info(f"Connecting to existing Phoenix server at http://{PHOENIX_HOST}:{PHOENIX_PORT}")
+        elif launch_server:
+            # Launch Phoenix server
+            logger.info("Starting Phoenix server...")
+            px.launch_app()
+            _launched_server = True
+            logger.info(f"Phoenix UI available at http://{PHOENIX_HOST}:{PHOENIX_PORT}")
+        else:
+            logger.warning("Phoenix server not running. Start it with: uv run phoenix serve")
+            return False
+
+        # Register the tracer provider (connects to Phoenix's OTLP endpoint)
+        _tracer_provider = register(
+            project_name=project_name,
+            endpoint=endpoint or f"http://{PHOENIX_HOST}:{PHOENIX_GRPC_PORT}",
+        )
 
         _tracing_enabled = True
         logger.info(f"Tracing initialized for project: {project_name}")
@@ -70,8 +106,12 @@ def init_tracing(
 
 
 def shutdown_tracing() -> None:
-    """Shutdown tracing and flush remaining spans."""
-    global _tracer_provider, _tracing_enabled
+    """Shutdown tracing and flush remaining spans.
+
+    Only shuts down the Phoenix server if we launched it.
+    If connecting to an external server, just flushes traces.
+    """
+    global _tracer_provider, _tracing_enabled, _launched_server
 
     if not _tracing_enabled:
         return
@@ -84,7 +124,14 @@ def shutdown_tracing() -> None:
     except Exception as e:
         logger.warning(f"Error flushing traces: {e}")
 
+    # Only log shutdown if we launched the server
+    if _launched_server:
+        logger.info("Phoenix server will shut down with process")
+    else:
+        logger.info("Disconnected from Phoenix (server still running)")
+
     _tracing_enabled = False
+    _launched_server = False
 
 
 def get_tracer(name: str = "bmlm"):

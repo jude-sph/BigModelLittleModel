@@ -26,12 +26,20 @@ class JeevesAutoSetup:
         # Default to the jeeves directory relative to this file
         self.jeeves_dir = jeeves_dir or Path(__file__).parent
 
-    def _run_adb(self, command: str) -> str:
-        """Execute ADB command"""
+    def _run_adb(self, command: str | list) -> str:
+        """Execute ADB command
+
+        Args:
+            command: Either a string (will be split by spaces) or a list of args
+        """
         full_cmd = ["adb"]
         if self.device_serial:
             full_cmd.extend(["-s", self.device_serial])
-        full_cmd.extend(command.split())
+
+        if isinstance(command, list):
+            full_cmd.extend(command)
+        else:
+            full_cmd.extend(command.split())
 
         try:
             result = subprocess.run(
@@ -189,35 +197,41 @@ class JeevesAutoSetup:
             return False
 
     def enable_accessibility_service(self) -> bool:
-        """Enable Jeeves accessibility service"""
+        """Enable Jeeves accessibility service alongside any existing services"""
         try:
             logger.info("🔐 Enabling accessibility service...")
-
-            # Start the main activity first
-            self._run_adb(f"shell am start -n {self.jeeves_package}/.MainActivity")
 
             # Get the current list of enabled services
             current_services = self._run_adb(
                 "shell settings get secure enabled_accessibility_services"
             ).strip()
 
-            # Add our service to the list
+            # Handle "null" response
+            if current_services == "null" or not current_services:
+                current_services = ""
+
+            # Add our service to the list if not already present
             if self.jeeves_service not in current_services:
-                new_services = (
-                    f"{current_services}:{self.jeeves_service}"
-                    if current_services
-                    else self.jeeves_service
-                )
-                self._run_adb(
-                    f"shell settings put secure enabled_accessibility_services '{new_services}'"
-                )
+                if current_services:
+                    new_services = f"{current_services}:{self.jeeves_service}"
+                else:
+                    new_services = self.jeeves_service
+
+                # Use list form to avoid shell quoting issues
+                self._run_adb([
+                    "shell", "settings", "put", "secure",
+                    "enabled_accessibility_services", new_services
+                ])
 
             self._run_adb("shell settings put secure accessibility_enabled 1")
 
             # Give it time to start
             import time
+            time.sleep(2)
 
-            time.sleep(3)
+            # Go to home screen to ensure Jeeves app isn't in foreground
+            self._run_adb("shell input keyevent KEYCODE_HOME")
+            time.sleep(1)
 
             # Verify it worked
             if self.is_accessibility_enabled():
@@ -265,37 +279,40 @@ class JeevesAutoSetup:
             logger.error(f"Error testing Jeeves functionality: {e}")
             return False
 
-    def enable_overlay_visibility(self) -> bool:
-        """Enable overlay visibility through ContentProvider or broadcast"""
+    def set_overlay_visibility(self, visible: bool = False) -> bool:
+        """Set overlay visibility through broadcast.
+
+        Args:
+            visible: Whether to show (True) or hide (False) the overlay.
+                     Default is False (hidden) to avoid interfering with agent.
+        """
+        action = "show" if visible else "hide"
         try:
-            logger.info("🎯 Enabling overlay visibility...")
+            logger.info(f"🎯 {'Enabling' if visible else 'Disabling'} overlay visibility...")
 
-            # First try ContentProvider method (works with our updated ContentProvider)
+            # Use broadcast method
             result = self._run_adb(
-                f"shell content insert --uri content://{self.jeeves_package}/overlay_offset "
-                "--bind visible:b:true"
-            )
-
-            if "success" in result.lower():
-                logger.info("✅ Overlay visibility enabled via ContentProvider")
-                return True
-
-            # Fallback to broadcast method (works with our new BroadcastReceiver)
-            logger.info("📡 Trying broadcast method...")
-            result = self._run_adb(
-                f"shell am broadcast -a com.jeeves.TOGGLE_OVERLAY --ez overlay_visible true"
+                f"shell am broadcast -a com.jeeves.TOGGLE_OVERLAY --ez overlay_visible {str(visible).lower()}"
             )
 
             if "Broadcast completed" in result or "result=0" in result:
-                logger.info("✅ Overlay visibility enabled via broadcast")
+                logger.info(f"✅ Overlay {action}n via broadcast")
                 return True
             else:
-                logger.warning(f"⚠️ Could not enable overlay: {result}")
+                logger.warning(f"⚠️ Could not {action} overlay: {result}")
                 return False
 
         except Exception as e:
-            logger.error(f"Error enabling overlay: {e}")
+            logger.error(f"Error setting overlay visibility: {e}")
             return False
+
+    def enable_overlay_visibility(self) -> bool:
+        """Enable overlay visibility (legacy method for compatibility)."""
+        return self.set_overlay_visibility(visible=True)
+
+    def disable_overlay_visibility(self) -> bool:
+        """Disable overlay visibility to avoid interference with agent."""
+        return self.set_overlay_visibility(visible=False)
 
     def check_device_connected(self) -> bool:
         """Check if device is connected via ADB"""
@@ -353,6 +370,8 @@ class JeevesAutoSetup:
 
         # Final functionality test
         if self.test_jeeves_functionality():
+            # Ensure we're on home screen, not in Jeeves app
+            self._run_adb("shell input keyevent KEYCODE_HOME")
             logger.info("🎩 Jeeves setup complete and verified!")
             return True
         else:

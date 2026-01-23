@@ -52,6 +52,7 @@ def setup_jeeves(config: dict) -> bool:
 
     if setup.ensure_jeeves_ready(force_reinstall=False):
         log.info("jeeves_ready")
+        # Enable overlay so agent can see numbered elements on screen
         setup.enable_overlay_visibility()
         return True
     else:
@@ -238,21 +239,21 @@ def main():
         except ImportError:
             log.warning("tracing_not_available", message="Install with: uv sync --extra tracing")
 
-    # Set up Jeeves accessibility service (for bounding box overlays)
-    if not args.skip_jeeves:
-        try:
-            setup_jeeves(config)
-        except Exception as e:
-            log.warning("jeeves_setup_error", error=str(e))
-            log.info("continuing_without_jeeves")
-
-    # Set up environment
+    # Set up environment FIRST (AndroidWorld installs its own accessibility forwarder)
     try:
         env, task_registry = setup_environment(config)
     except Exception as e:
         log.error("environment_setup_failed", error=str(e))
         log.info("hint", message="Make sure the Android emulator is running with: emulator -avd AndroidWorldAvd -grpc 8554")
         return 1
+
+    # Set up Jeeves AFTER AndroidWorld (so we can add it alongside the forwarder)
+    if not args.skip_jeeves:
+        try:
+            setup_jeeves(config)
+        except Exception as e:
+            log.warning("jeeves_setup_error", error=str(e))
+            log.info("continuing_without_jeeves")
 
     # Create agent
     agent = create_agent(env, config)
