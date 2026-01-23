@@ -39,33 +39,22 @@ You will receive:
 
 Your job is to:
 1. Find the best matching UI element by its INDEX
-2. Decide the exact action to take
+2. Decide the exact action to take (choose ONE: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, or wait)
 3. Report your confidence level
 
-Output JSON:
-{
-    "action": "tap|type|swipe|scroll|long_press|navigate_home|navigate_back|wait",
-    "target_index": 5,
-    "input_text": "text to type or null",
-    "direction": "up|down|left|right or null",
-    "confidence": "high|medium|low",
-    "reasoning": "Brief explanation",
-    "needs_replanning": false
-}
+Output ONLY valid JSON. Example:
+{"action": "tap", "target_index": 5, "input_text": null, "direction": null, "confidence": "high", "reasoning": "Tapping Settings button", "needs_replanning": false}
 
-IMPORTANT:
-- target_index must be an INTEGER matching an element's index from the list
-- For tap/long_press: set target_index to the element you want to interact with
-- For swipe/scroll: set direction, target_index is optional
-- For type: set input_text, target_index is optional (types in focused field)
-- For navigate_home/navigate_back/wait: no target_index needed
+Action types:
+- tap: Tap element at target_index
+- type: Type input_text into focused field
+- swipe/scroll: Swipe in direction (up/down/left/right)
+- long_press: Long press element at target_index
+- navigate_home: Go to home screen
+- navigate_back: Press back button
+- wait: Wait for screen to load
 
-Set needs_replanning=true if:
-- You cannot find any matching element for the current step
-- The screen state doesn't match expectations
-- You're very uncertain about what to do
-
-Use wait action if you need more time for the screen to load."""
+Set needs_replanning=true if you cannot find a matching element or are very uncertain."""
 
 
 class SmallModel(BaseModel):
@@ -142,6 +131,7 @@ class SmallModel(BaseModel):
             trace_result["target_index"] = decision.target_index
             trace_result["confidence"] = decision.confidence.value
             trace_result["needs_replanning"] = decision.needs_replanning
+            trace_result["reasoning"] = decision.reasoning
             trace_result["generation_time_ms"] = result.generation_time_ms
             trace_result["raw_output"] = result.text
 

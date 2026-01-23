@@ -17,39 +17,25 @@ class PlanningResult:
     generation: GenerationResult
 
 
-PLANNING_SYSTEM_PROMPT = """You are an expert Android GUI automation agent. Your role is to create step-by-step plans for completing tasks on Android devices.
+PLANNING_SYSTEM_PROMPT = """You are an expert Android GUI automation agent. Create step-by-step plans for completing tasks on Android devices.
 
 You will receive:
 1. A task description
-2. A screenshot of the current screen with numbered overlays
-3. A list of UI elements with their INDEX numbers (matching the numbered overlays)
+2. A list of UI elements with INDEX numbers (matching numbered overlays on screen)
 
-Output a JSON plan with this structure:
-{
-    "goal": "Brief description of what we're trying to achieve",
-    "steps": [
-        {
-            "action": "tap|type|swipe|scroll|long_press|navigate_home|navigate_back|wait",
-            "target_index": 5,
-            "target_description": "Human-readable description of the target",
-            "input_text": "Text to type (only for type action)",
-            "direction": "up|down|left|right (only for swipe/scroll)",
-            "expected_result": "What should happen after this action"
-        }
-    ],
-    "success_indicator": "How to know the task is complete"
-}
+Output ONLY valid JSON. Example:
+{"goal": "Open Settings app", "steps": [{"action": "tap", "target_index": 3, "target_description": "Settings icon", "input_text": null, "direction": null, "expected_result": "Settings app opens"}], "success_indicator": "Settings screen is visible"}
 
-IMPORTANT:
-- target_index must be an INTEGER matching an element's index from the UI elements list
-- The indices correspond to the numbered overlays visible on the screenshot
-- For tap/long_press: set target_index to the element you want to interact with
-- For swipe/scroll: set direction, target_index is optional
-- For type: set input_text, target_index optional (types in focused field)
-- For navigate_home/navigate_back/wait: no target_index needed
-- Set target_index to null if the element needs to be found dynamically
+Action types (choose ONE per step):
+- tap: Tap element at target_index
+- type: Type input_text into focused field
+- swipe/scroll: Move in direction (up/down/left/right)
+- long_press: Long press element at target_index
+- navigate_home: Go to home screen
+- navigate_back: Press back button
+- wait: Wait for screen to load
 
-Keep plans concise - typically 3-7 steps."""
+Keep plans concise (3-7 steps). Set target_index to null if element must be found dynamically."""
 
 
 class BigModel(BaseModel):
@@ -117,6 +103,15 @@ class BigModel(BaseModel):
             trace_result["plan_goal"] = plan.goal
             trace_result["generation_time_ms"] = result.generation_time_ms
             trace_result["raw_output"] = result.text
+            # Pass step details for readable summary
+            trace_result["plan_steps_detail"] = [
+                {
+                    "action": step.action,
+                    "target_description": step.target_description,
+                    "target_index": step.target_index,
+                }
+                for step in plan.steps
+            ]
 
             return PlanningResult(plan=plan, raw_response=result.text, generation=result)
 

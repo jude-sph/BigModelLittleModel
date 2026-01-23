@@ -71,7 +71,7 @@ def trace_big_model(
 
         yield result
 
-        # Set output attributes from result dict
+        # Set readable output attributes
         if "plan_steps" in result:
             span.set_attribute("output.plan_steps", result["plan_steps"])
         if "plan_goal" in result:
@@ -80,8 +80,20 @@ def trace_big_model(
             span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
         if "tokens" in result:
             span.set_attribute("metrics.tokens", result["tokens"])
+
+        # Create human-readable plan summary
+        if "plan_steps_detail" in result:
+            steps = result["plan_steps_detail"]
+            summary_lines = [f"Goal: {result.get('plan_goal', '?')}"]
+            for i, step in enumerate(steps[:10], 1):  # Max 10 steps
+                action = step.get("action", "?")
+                target = step.get("target_description", step.get("target_index", "?"))
+                summary_lines.append(f"  {i}. {action} → {target}")
+            span.set_attribute("output.plan_summary", "\n".join(summary_lines))
+
+        # Store raw for debugging
         if "raw_output" in result:
-            span.set_attribute("output.raw", result["raw_output"][:2000])  # Truncate
+            span.set_attribute("debug.raw_response", result["raw_output"][:1500])
 
 
 @contextmanager
@@ -122,19 +134,34 @@ def trace_small_model(
 
         yield result
 
-        # Set output attributes
+        # Set readable output attributes
         if "action" in result:
             span.set_attribute("output.action", result["action"])
-        if "target_id" in result:
-            span.set_attribute("output.target_id", str(result["target_id"]))
+        if "target_index" in result:
+            idx = result["target_index"]
+            span.set_attribute("output.target_index", idx if idx is not None else -1)
         if "confidence" in result:
             span.set_attribute("output.confidence", result["confidence"])
         if "needs_replanning" in result:
             span.set_attribute("output.needs_replanning", result["needs_replanning"])
+        if "reasoning" in result:
+            span.set_attribute("output.reasoning", result["reasoning"])
         if "generation_time_ms" in result:
             span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
+
+        # Create human-readable summary
+        action = result.get("action", "?")
+        target = result.get("target_index", "none")
+        conf = result.get("confidence", "?")
+        reasoning = result.get("reasoning", "")
+        summary = f"{action} → element [{target}] ({conf} confidence)"
+        if reasoning:
+            summary += f"\nReason: {reasoning}"
+        span.set_attribute("output.summary", summary)
+
+        # Store raw for debugging (collapsed in UI)
         if "raw_output" in result:
-            span.set_attribute("output.raw", result["raw_output"][:2000])
+            span.set_attribute("debug.raw_response", result["raw_output"][:1500])
 
 
 @contextmanager
