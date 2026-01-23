@@ -103,6 +103,7 @@ def trace_small_model(
     ui_elements_count: int,
     model_path: str,
     recent_actions_count: int = 0,
+    ui_elements: Optional[list[dict]] = None,
 ) -> Generator[dict, None, None]:
     """Trace a small model (executor) generation call.
 
@@ -112,6 +113,7 @@ def trace_small_model(
         ui_elements_count: Number of UI elements in context
         model_path: Model being used
         recent_actions_count: Number of recent actions in context
+        ui_elements: List of UI elements visible to the model
 
     Yields:
         Dict to populate with results (action, confidence, etc.)
@@ -132,6 +134,18 @@ def trace_small_model(
         span.set_attribute("input.ui_elements_count", ui_elements_count)
         span.set_attribute("input.recent_actions_count", recent_actions_count)
 
+        # Format UI elements for readable display
+        if ui_elements:
+            elements_summary = []
+            for elem in ui_elements[:20]:  # Limit to 20 elements
+                idx = elem.get("index", "?")
+                text = elem.get("text", "")
+                desc = elem.get("content_desc", "")
+                elem_type = elem.get("type", "")
+                label = text or desc or elem_type or "unknown"
+                elements_summary.append(f"[{idx}] {label}")
+            span.set_attribute("input.ui_elements", "\n".join(elements_summary))
+
         yield result
 
         # Set readable output attributes
@@ -146,15 +160,37 @@ def trace_small_model(
             span.set_attribute("output.needs_replanning", result["needs_replanning"])
         if "reasoning" in result:
             span.set_attribute("output.reasoning", result["reasoning"])
+        if "direction" in result and result["direction"]:
+            span.set_attribute("output.direction", result["direction"])
+        if "input_text" in result and result["input_text"]:
+            span.set_attribute("output.input_text", result["input_text"])
         if "generation_time_ms" in result:
             span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
 
-        # Create human-readable summary
+        # Create human-readable summary based on action type
         action = result.get("action", "?")
-        target = result.get("target_index", "none")
+        target = result.get("target_index")
+        direction = result.get("direction")
+        input_text = result.get("input_text")
         conf = result.get("confidence", "?")
         reasoning = result.get("reasoning", "")
-        summary = f"{action} → element [{target}] ({conf} confidence)"
+
+        # Build action-specific summary
+        if action in ("tap", "long_press"):
+            summary = f"{action} → element [{target}]"
+        elif action in ("swipe", "scroll"):
+            summary = f"{action} {direction or '?'}"
+            if target is not None:
+                summary += f" (from element [{target}])"
+        elif action == "type":
+            text_preview = (input_text[:30] + "...") if input_text and len(input_text) > 30 else input_text
+            summary = f"type \"{text_preview or ''}\""
+        elif action in ("navigate_home", "navigate_back", "wait"):
+            summary = action
+        else:
+            summary = f"{action} → element [{target}]"
+
+        summary += f" ({conf} confidence)"
         if reasoning:
             summary += f"\nReason: {reasoning}"
         span.set_attribute("output.summary", summary)

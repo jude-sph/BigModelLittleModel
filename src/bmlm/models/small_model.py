@@ -73,6 +73,7 @@ class SmallModel(BaseModel):
             ui_elements_count=len(ui_elements),
             model_path=self.config.model_path,
             recent_actions_count=len(recent_actions) if recent_actions else 0,
+            ui_elements=ui_elements,
         ) as trace_result:
             prompt_parts = [
                 f"<|im_start|>system\n{self.system_prompt}<|im_end|>",
@@ -114,6 +115,8 @@ class SmallModel(BaseModel):
             # Record trace data
             trace_result["action"] = decision.action
             trace_result["target_index"] = decision.target_index
+            trace_result["direction"] = decision.direction
+            trace_result["input_text"] = decision.input_text
             trace_result["confidence"] = decision.confidence.value
             trace_result["needs_replanning"] = decision.needs_replanning
             trace_result["reasoning"] = decision.reasoning
