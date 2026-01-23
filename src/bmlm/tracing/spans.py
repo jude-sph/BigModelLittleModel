@@ -250,6 +250,8 @@ def trace_task(
             span.set_attribute("metrics.elapsed_s", result["elapsed_s"])
         if "error" in result:
             span.set_attribute("task.error", result["error"])
+        if "termination_reason" in result:
+            span.set_attribute("task.termination_reason", result["termination_reason"])
 
 
 @contextmanager

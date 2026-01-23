@@ -5,9 +5,10 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import TYPE_CHECKING, Callable
+from typing import TYPE_CHECKING, Callable, Optional
 
 import structlog
+from PIL import Image
 
 from bmlm.models.small_model import Confidence
 from bmlm.orchestrator.plan import Plan
@@ -80,20 +81,24 @@ class Orchestrator:
         # Callbacks for integration
         self._get_ui_elements: Callable[[], list[dict]] | None = None
         self._execute_action: Callable[[dict], bool] | None = None
+        self._get_screenshot: Callable[[], Optional[Image.Image]] | None = None
 
     def set_callbacks(
         self,
         get_ui_elements: Callable[[], list[dict]],
         execute_action: Callable[[dict], bool],
+        get_screenshot: Callable[[], Optional[Image.Image]] | None = None,
     ) -> None:
         """Set callbacks for UI interaction.
 
         Args:
             get_ui_elements: Function that returns current UI elements
             execute_action: Function that executes an action, returns success
+            get_screenshot: Function that returns current screenshot (optional)
         """
         self._get_ui_elements = get_ui_elements
         self._execute_action = execute_action
+        self._get_screenshot = get_screenshot
 
     def start_task(self, task: str) -> Plan:
         """Start a new task by generating initial plan.
@@ -108,10 +113,19 @@ class Orchestrator:
         self.state = OrchestratorState()
 
         ui_elements = self._get_ui_elements() if self._get_ui_elements else []
-        result = self.big_model.generate(task=task, ui_elements=ui_elements)
+        screenshot = self._get_screenshot() if self._get_screenshot else None
+        result = self.big_model.generate(task=task, ui_elements=ui_elements, screenshot=screenshot)
 
         self.state.current_plan = result.plan
         self.state.total_replans += 1
+
+        # Check for empty or failed plan
+        if not result.plan.steps:
+            log.warning(
+                "empty_plan_generated",
+                raw_response=result.raw_response[:500] if result.raw_response else "none",
+                parse_error=getattr(result.plan, "parse_error", False),
+            )
 
         log.info(
             "plan_generated",
@@ -249,10 +263,12 @@ class Orchestrator:
             return
 
         ui_elements = self._get_ui_elements() if self._get_ui_elements else []
+        screenshot = self._get_screenshot() if self._get_screenshot else None
 
         result = self.big_model.generate(
             task=self.state.current_plan.goal,
             ui_elements=ui_elements,
+            screenshot=screenshot,
             previous_actions=self.state.action_history[-10:],
         )
 

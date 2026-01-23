@@ -30,37 +30,16 @@ class ExecutionDecision:
     generation: GenerationResult
 
 
-EXECUTOR_SYSTEM_PROMPT = """You are an Android GUI executor agent. Your role is to execute specific steps from a plan.
+EXECUTOR_SYSTEM_PROMPT = """You execute plan steps. The plan specifies the action - you find the target element.
 
-CRITICAL: Follow the plan step closely. Use the action type and find an element matching the target description.
-- The element's label must SEMANTICALLY match what you're controlling
-- "open calculator" → find "Calculator" (NOT Calendar, NOT Clock)
-- "send message" → find "Send" button (NOT Delete, NOT Cancel)
-- If no element matches the plan's target, set needs_replanning=true
+COPY THE ACTION FROM THE PLAN STEP. If the plan says "swipe", output "swipe". If it says "tap", output "tap".
 
-You will receive:
-1. The current plan step to execute
-2. The overall goal
-3. A list of UI elements with their INDEX numbers
+Your only job: find the UI element that matches the plan's target description.
 
-Your job is to:
-1. READ the step carefully - what are you trying to control?
-2. FIND an element whose label/description matches that function
-3. If no matching element exists, set needs_replanning=true
+Output JSON with the SAME action as the plan step:
+{"action": "<copy from plan>", "target_index": <element number>, "direction": "<if swipe>", "confidence": "high/medium/low", "reasoning": "<why this element>", "needs_replanning": false}
 
-Output ONLY valid JSON. Example:
-{"action": "tap", "target_index": 5, "input_text": null, "direction": null, "confidence": "high", "reasoning": "Tapping Settings button", "needs_replanning": false}
-
-Action types:
-- tap: Tap element at target_index
-- type: Type input_text into focused field
-- swipe/scroll: Swipe in direction (up/down/left/right)
-- long_press: Long press element at target_index
-- navigate_home: Go to home screen
-- navigate_back: Press back button
-- wait: Wait for screen to load
-
-IMPORTANT: Do NOT pick a random element. If the step says "adjust brightness" and you only see WiFi/Bluetooth elements, you MUST set needs_replanning=true."""
+If no element matches, set needs_replanning=true."""
 
 
 class SmallModel(BaseModel):
@@ -99,9 +78,9 @@ class SmallModel(BaseModel):
                 f"<|im_start|>system\n{self.system_prompt}<|im_end|>",
                 "<|im_start|>user",
                 f"Goal: {plan.goal}",
-                f"\nCurrent step ({current_step.index + 1}/{len(plan.steps)}):",
-                f"  Action: {current_step.action}",
-                f"  Target: {current_step.target_description}",
+                f"\nPlan step {current_step.index + 1}/{len(plan.steps)}:",
+                f"  ACTION TO EXECUTE: {current_step.action}",
+                f"  TARGET TO FIND: {current_step.target_description}",
             ]
 
             if current_step.target_index is not None:
@@ -124,8 +103,8 @@ class SmallModel(BaseModel):
             if recent_actions:
                 prompt_parts.append(f"\nRecent actions: {json.dumps(recent_actions[-3:])}")
 
-            prompt_parts.append("\nFind the element that matches the step's intent. If no element logically matches, set needs_replanning=true.<|im_end|>")
-            prompt_parts.append("<|im_start|>assistant\n")
+            prompt_parts.append(f"\nOutput action=\"{current_step.action}\" and find the matching element.<|im_end|>")
+            prompt_parts.append("<|im_start|>assistant\n{")
 
             prompt = "\n".join(prompt_parts)
             result = self._generate(prompt)
@@ -145,7 +124,8 @@ class SmallModel(BaseModel):
 
     def _parse_decision(self, result: GenerationResult) -> ExecutionDecision:
         """Parse an ExecutionDecision from the model response."""
-        response = result.text
+        # We prepend { in the prompt, so add it back for parsing
+        response = "{" + result.text
         try:
             json_start = response.find("{")
             json_end = response.rfind("}") + 1

@@ -158,6 +158,14 @@ def run_task(agent, task_name: str, task_class, env, max_steps: int) -> dict:
 
     stats = agent.orchestrator.get_stats()
 
+    # Determine why the task ended
+    if done:
+        termination_reason = "plan_complete"
+    elif steps >= max_steps:
+        termination_reason = "max_steps_reached"
+    else:
+        termination_reason = "unknown"
+
     result = {
         "task": task_name,
         "goal": goal,
@@ -166,6 +174,7 @@ def run_task(agent, task_name: str, task_class, env, max_steps: int) -> dict:
         "replans": stats["total_replans"],
         "elapsed_s": round(elapsed, 2),
         "done": done,
+        "termination_reason": termination_reason,
     }
 
     log.info("task_complete", **result)
@@ -313,6 +322,7 @@ def main():
                     trace_result["steps"] = result.get("steps", 0)
                     trace_result["replans"] = result.get("replans", 0)
                     trace_result["elapsed_s"] = result.get("elapsed_s", 0)
+                    trace_result["termination_reason"] = result.get("termination_reason", "unknown")
             else:
                 result = run_task(agent, task_name, task_class, env, args.max_steps)
 

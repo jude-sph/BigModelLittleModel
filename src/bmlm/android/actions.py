@@ -6,6 +6,7 @@ from enum import Enum
 from typing import Any, Optional
 
 import structlog
+from PIL import Image
 
 from bmlm.android.jeeves_client import JeevesClient
 from bmlm.tracing import trace_action
@@ -67,6 +68,29 @@ class ActionExecutor:
         except Exception as e:
             log.warning("failed_to_get_ui_elements", error=str(e))
             return self._ui_elements_cache
+
+    def get_screenshot(self) -> Optional[Image.Image]:
+        """Capture a screenshot from the Android device.
+
+        The screenshot will include Jeeves overlays showing numbered elements.
+
+        Returns:
+            PIL Image of the current screen, or None if capture failed
+        """
+        try:
+            # AndroidWorld's env has get_state which returns screen pixels
+            state = self.env.get_state()
+            if hasattr(state, "pixels") and state.pixels is not None:
+                # Convert numpy array to PIL Image
+                import numpy as np
+                pixels = np.array(state.pixels)
+                return Image.fromarray(pixels)
+            else:
+                log.warning("screenshot_no_pixels")
+                return None
+        except Exception as e:
+            log.error("screenshot_failed", error=str(e))
+            return None
 
     def execute(self, action_dict: dict) -> bool:
         """Execute an action on the device.

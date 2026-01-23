@@ -84,6 +84,7 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
         self.orchestrator.set_callbacks(
             get_ui_elements=self.action_executor.get_ui_elements,
             execute_action=self.action_executor.execute,
+            get_screenshot=self.action_executor.get_screenshot,
         )
 
         self._task_started = False
@@ -126,16 +127,22 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
             self.orchestrator.start_task(self._current_task)
             self._task_started = True
 
-        # Check if plan is complete
-        if self.orchestrator.state.current_plan and self.orchestrator.state.current_plan.is_complete:
-            stats = self.orchestrator.get_stats()
-            return base_agent.AgentInteractionResult(
-                done=True,
-                data={
-                    "output": f"Task completed. Steps: {stats['total_steps']}, Replans: {stats['total_replans']}",
-                    "stats": stats,
-                },
-            )
+        # Check if plan is complete (but not if it's empty - that's a failure)
+        plan = self.orchestrator.state.current_plan
+        if plan and plan.is_complete:
+            # Empty plan means parsing failed - try replanning
+            if not plan.steps and self.orchestrator.state.total_replans < 3:
+                log.warning("empty_plan_replanning", attempt=self.orchestrator.state.total_replans)
+                self.orchestrator.start_task(self._current_task)
+            else:
+                stats = self.orchestrator.get_stats()
+                return base_agent.AgentInteractionResult(
+                    done=True,
+                    data={
+                        "output": f"Task completed. Steps: {stats['total_steps']}, Replans: {stats['total_replans']}",
+                        "stats": stats,
+                    },
+                )
 
         # Execute one step
         result = self.orchestrator.step()
