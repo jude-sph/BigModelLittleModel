@@ -76,6 +76,8 @@ def trace_big_model(
             span.set_attribute("output.plan_steps", result["plan_steps"])
         if "plan_goal" in result:
             span.set_attribute("output.plan_goal", result["plan_goal"])
+        if "expects_completion" in result:
+            span.set_attribute("output.expects_completion", result["expects_completion"])
         if "generation_time_ms" in result:
             span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
         if "tokens" in result:
@@ -84,7 +86,9 @@ def trace_big_model(
         # Create human-readable plan summary
         if "plan_steps_detail" in result:
             steps = result["plan_steps_detail"]
-            summary_lines = [f"Goal: {result.get('plan_goal', '?')}"]
+            expects = result.get("expects_completion", False)
+            plan_type = "FINAL" if expects else "INTERMEDIATE"
+            summary_lines = [f"Goal: {result.get('plan_goal', '?')} [{plan_type}]"]
             for i, step in enumerate(steps[:10], 1):  # Max 10 steps
                 action = step.get("action", "?")
                 target = step.get("target_description", step.get("target_index", "?"))
@@ -94,6 +98,52 @@ def trace_big_model(
         # Store raw for debugging
         if "raw_output" in result:
             span.set_attribute("debug.raw_response", result["raw_output"][:1500])
+
+
+@contextmanager
+def trace_verification(
+    goal: str,
+    model_path: str,
+) -> Generator[dict, None, None]:
+    """Trace a goal verification call.
+
+    Args:
+        goal: The goal being verified
+        model_path: Model being used
+
+    Yields:
+        Dict to populate with results (goal_achieved, reason, etc.)
+    """
+    if not is_tracing_enabled():
+        yield {}
+        return
+
+    tracer = get_tracer("bmlm.big_model")
+    result: dict[str, Any] = {}
+
+    with tracer.start_as_current_span("big_model.verify") as span:
+        _add_task_metadata(span)
+        span.set_attribute("llm.model", model_path)
+        span.set_attribute("llm.role", "verifier")
+        span.set_attribute("input.goal", goal)
+
+        yield result
+
+        if "goal_achieved" in result:
+            span.set_attribute("output.goal_achieved", result["goal_achieved"])
+        if "reason" in result:
+            span.set_attribute("output.reason", result["reason"])
+        if "next_steps" in result:
+            span.set_attribute("output.next_steps", result["next_steps"])
+        if "generation_time_ms" in result:
+            span.set_attribute("metrics.generation_time_ms", result["generation_time_ms"])
+        if "raw_output" in result:
+            span.set_attribute("debug.raw_response", result["raw_output"][:1500])
+
+        # Summary
+        achieved = "✓ ACHIEVED" if result.get("goal_achieved") else "✗ NOT ACHIEVED"
+        reason = result.get("reason", "")
+        span.set_attribute("output.summary", f"{achieved}: {reason}")
 
 
 @contextmanager

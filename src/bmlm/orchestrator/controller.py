@@ -153,13 +153,53 @@ class Orchestrator:
 
         # Check if plan is complete
         if plan.is_complete:
-            return StepResult(
-                success=True,
-                action_taken="none",
-                target_index=None,
-                duration_ms=0,
-                triggered_replan=False,
-            )
+            duration_ms = (time.perf_counter() - start_time) * 1000
+
+            # Only verify if the plan was expected to complete the task
+            if plan.expects_completion:
+                verification = self._verify_completion()
+                duration_ms = (time.perf_counter() - start_time) * 1000
+
+                if verification.goal_achieved:
+                    log.info("goal_verified_complete", reason=verification.reason)
+                    return StepResult(
+                        success=True,
+                        action_taken="goal_complete",
+                        target_index=None,
+                        duration_ms=duration_ms,
+                        triggered_replan=False,
+                    )
+                else:
+                    # Goal not achieved - use new plan from verification
+                    log.info("goal_not_complete", reason=verification.reason)
+                    if verification.next_plan and verification.next_plan.steps:
+                        self.state.current_plan = verification.next_plan
+                        self.state.steps_since_replan = 0
+                        self.state.total_replans += 1
+                        log.info("continuing_with_new_plan", steps=len(verification.next_plan.steps))
+                    else:
+                        # Verification didn't provide next steps, do full replan
+                        self._replan(TriggerReason.PLAN_COMPLETE)
+                    return StepResult(
+                        success=True,
+                        action_taken="verify_replan",
+                        target_index=None,
+                        duration_ms=duration_ms,
+                        triggered_replan=True,
+                        trigger_reason=TriggerReason.PLAN_COMPLETE,
+                    )
+            else:
+                # Intermediate plan complete - just get more steps
+                log.info("intermediate_plan_complete", requesting_more_steps=True)
+                self._replan(TriggerReason.PLAN_COMPLETE)
+                return StepResult(
+                    success=True,
+                    action_taken="continue_planning",
+                    target_index=None,
+                    duration_ms=duration_ms,
+                    triggered_replan=True,
+                    trigger_reason=TriggerReason.PLAN_COMPLETE,
+                )
 
         current_step = plan.current_step
         if not current_step:
@@ -256,6 +296,16 @@ class Orchestrator:
             return TriggerReason.MAX_STEPS_REACHED
 
         return None
+
+    def _verify_completion(self):
+        """Verify if the goal has been achieved using the big model."""
+        screenshot = self._get_screenshot() if self._get_screenshot else None
+
+        return self.big_model.verify_completion(
+            goal=self.state.current_plan.goal,
+            screenshot=screenshot,
+            previous_actions=self.state.action_history[-10:],
+        )
 
     def _replan(self, reason: TriggerReason) -> None:
         """Generate a new plan from the big model."""

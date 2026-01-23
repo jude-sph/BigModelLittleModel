@@ -6,6 +6,7 @@ from bmlm.tracing.spans import (
     trace_small_model,
     trace_action,
     trace_task,
+    trace_verification,
     set_task_metadata,
 )
 
@@ -17,5 +18,6 @@ __all__ = [
     "trace_small_model",
     "trace_action",
     "trace_task",
+    "trace_verification",
     "set_task_metadata",
 ]

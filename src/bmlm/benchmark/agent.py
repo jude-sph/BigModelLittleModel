@@ -128,25 +128,25 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
             self.orchestrator.start_task(self._current_task)
             self._task_started = True
 
-        # Check if plan is complete (but not if it's empty - that's a failure)
+        # Check for empty plan (parsing failure) - try replanning
         plan = self.orchestrator.state.current_plan
-        if plan and plan.is_complete:
-            # Empty plan means parsing failed - try replanning
-            if not plan.steps and self.orchestrator.state.total_replans < 3:
-                log.warning("empty_plan_replanning", attempt=self.orchestrator.state.total_replans)
-                self.orchestrator.start_task(self._current_task)
-            else:
-                stats = self.orchestrator.get_stats()
-                return base_agent.AgentInteractionResult(
-                    done=True,
-                    data={
-                        "output": f"Task completed. Steps: {stats['total_steps']}, Replans: {stats['total_replans']}",
-                        "stats": stats,
-                    },
-                )
+        if plan and not plan.steps and self.orchestrator.state.total_replans < 3:
+            log.warning("empty_plan_replanning", attempt=self.orchestrator.state.total_replans)
+            self.orchestrator.start_task(self._current_task)
 
-        # Execute one step
+        # Execute one step (orchestrator handles verification when plan completes)
         result = self.orchestrator.step()
+
+        # Check if goal was verified as complete
+        if result.action_taken == "goal_complete":
+            stats = self.orchestrator.get_stats()
+            return base_agent.AgentInteractionResult(
+                done=True,
+                data={
+                    "output": f"Goal verified complete. Steps: {stats['total_steps']}, Replans: {stats['total_replans']}",
+                    "stats": stats,
+                },
+            )
 
         # Build output message
         output = f"Action: {result.action_taken}"

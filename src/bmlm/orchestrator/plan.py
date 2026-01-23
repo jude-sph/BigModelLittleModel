@@ -39,6 +39,7 @@ class Plan:
     goal: str
     steps: list[PlanStep]
     success_indicator: str
+    expects_completion: bool = False  # True if this plan should complete the task
     parse_error: bool = False
     current_step_index: int = 0
     _completed: bool = False
@@ -78,6 +79,7 @@ class Plan:
         return {
             "goal": self.goal,
             "success_indicator": self.success_indicator,
+            "expects_completion": self.expects_completion,
             "current_step": self.current_step_index,
             "total_steps": len(self.steps),
             "is_complete": self.is_complete,

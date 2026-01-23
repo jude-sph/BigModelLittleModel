@@ -8,7 +8,7 @@ from PIL import Image
 
 from bmlm.models.base import GenerationResult, ModelConfig, VisionModel
 from bmlm.orchestrator.plan import Plan, PlanStep
-from bmlm.tracing import trace_big_model
+from bmlm.tracing import trace_big_model, trace_verification
 
 
 @dataclass
@@ -20,18 +20,42 @@ class PlanningResult:
     generation: GenerationResult
 
 
+@dataclass
+class VerificationResult:
+    """Result from goal verification."""
+
+    goal_achieved: bool
+    reason: str
+    next_plan: Optional[Plan]  # New plan if goal not achieved
+    raw_response: str
+    generation: GenerationResult
+
+
 PLANNING_SYSTEM_PROMPT_TEMPLATE = """You are an Android GUI planner. Look at the screenshot and plan the next {max_steps} steps toward the goal.
 
 RULES:
 - Output exactly 1-{max_steps} steps. Each step must be DIFFERENT.
 - target_description = what you interact with NOW (not the end goal)
 - Use target_index from screenshot if visible, null if not
+- Set expects_completion to true ONLY if these steps should fully achieve the goal
 - Output raw JSON only, no markdown
 
-Example:
-{{"goal": "Set brightness max", "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "top of screen", "expected_result": "Quick settings opens"}}], "success_indicator": "Brightness at max"}}
+Example (intermediate plan):
+{{"goal": "Send message to John", "expects_completion": false, "steps": [{{"action": "tap", "target_index": 5, "target_description": "Messages app icon", "expected_result": "Messages app opens"}}], "success_indicator": "Message sent confirmation"}}
+
+Example (final plan):
+{{"goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "tap", "target_index": 12, "target_description": "brightness slider", "expected_result": "Brightness changes"}}, {{"action": "swipe", "direction": "right", "target_index": 12, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Brightness at max"}}
 
 Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
+
+
+VERIFICATION_PROMPT_TEMPLATE = """Look at the screenshot. Has this goal been achieved: "{goal}"?
+
+Output JSON only:
+{{"goal_achieved": true/false, "reason": "brief explanation", "next_steps": []}}
+
+If goal_achieved is false, include 1-{max_steps} next_steps to continue.
+Example next_steps: [{{"action": "tap", "target_index": 5, "target_description": "Save button", "expected_result": "Settings saved"}}]"""
 
 
 class BigModel(VisionModel):
@@ -107,6 +131,7 @@ class BigModel(VisionModel):
             # Record trace data
             trace_result["plan_steps"] = len(plan.steps)
             trace_result["plan_goal"] = plan.goal
+            trace_result["expects_completion"] = plan.expects_completion
             trace_result["generation_time_ms"] = result.generation_time_ms
             trace_result["raw_output"] = result.text
             # Pass step details for readable summary
@@ -120,6 +145,100 @@ class BigModel(VisionModel):
             ]
 
             return PlanningResult(plan=plan, raw_response=result.text, generation=result)
+
+    def verify_completion(
+        self,
+        goal: str,
+        screenshot: Optional[Image.Image] = None,
+        previous_actions: list[dict] | None = None,
+    ) -> VerificationResult:
+        """Verify if the goal has been achieved and get next steps if not.
+
+        Args:
+            goal: The goal to verify
+            screenshot: Current screenshot
+            previous_actions: Actions taken so far
+
+        Returns:
+            VerificationResult with achievement status and optional new plan
+        """
+        with trace_verification(goal=goal, model_path=self.config.model_path) as trace_result:
+            prompt = VERIFICATION_PROMPT_TEMPLATE.format(goal=goal, max_steps=self.max_plan_steps)
+
+            if previous_actions:
+                actions_summary = ", ".join(a.get("action", "?") for a in previous_actions[-5:])
+                prompt += f"\n\nRecent actions: {actions_summary}"
+
+            if screenshot is not None:
+                result = self._generate_with_image(prompt, screenshot)
+            else:
+                result = GenerationResult(
+                    text='{"goal_achieved": false, "reason": "No screenshot", "next_steps": []}',
+                    tokens_generated=0,
+                    generation_time_ms=0,
+                    tokens_per_second=0,
+                )
+
+            # Parse verification response
+            goal_achieved = False
+            reason = ""
+            next_plan = None
+
+            try:
+                # Strip markdown if present
+                response = result.text
+                if "```json" in response:
+                    response = response.split("```json")[1].split("```")[0]
+                elif "```" in response:
+                    response = response.split("```")[1].split("```")[0]
+
+                json_start = response.find("{")
+                json_end = response.rfind("}") + 1
+                if json_start >= 0 and json_end > json_start:
+                    data = json.loads(response[json_start:json_end])
+                    goal_achieved = data.get("goal_achieved", False)
+                    reason = data.get("reason", "")
+
+                    # Parse next steps if goal not achieved
+                    if not goal_achieved and "next_steps" in data:
+                        steps = []
+                        for i, step_data in enumerate(data["next_steps"]):
+                            target_index = step_data.get("target_index")
+                            if target_index is not None:
+                                try:
+                                    target_index = int(target_index)
+                                except (ValueError, TypeError):
+                                    target_index = None
+                            steps.append(
+                                PlanStep(
+                                    index=i,
+                                    action=step_data.get("action", "tap"),
+                                    target_index=target_index,
+                                    target_description=step_data.get("target_description", ""),
+                                    input_text=step_data.get("input_text"),
+                                    direction=step_data.get("direction"),
+                                    expected_result=step_data.get("expected_result", ""),
+                                )
+                            )
+                        if steps:
+                            next_plan = Plan(goal=goal, steps=steps, success_indicator="")
+            except (json.JSONDecodeError, KeyError, TypeError):
+                reason = "Failed to parse verification response"
+
+            # Record trace data
+            trace_result["goal_achieved"] = goal_achieved
+            trace_result["reason"] = reason
+            trace_result["next_steps"] = len(next_plan.steps) if next_plan else 0
+            trace_result["generation_time_ms"] = result.generation_time_ms
+            trace_result["raw_output"] = result.text
+
+            return VerificationResult(
+                goal_achieved=goal_achieved,
+                reason=reason,
+                next_plan=next_plan,
+                raw_response=result.text,
+                generation=result,
+            )
 
     def _parse_plan(self, response: str, task: str) -> Plan:
         """Parse a Plan from the model's JSON response."""
@@ -163,6 +282,7 @@ class BigModel(VisionModel):
                     goal=data.get("goal", task),
                     steps=steps,
                     success_indicator=data.get("success_indicator", ""),
+                    expects_completion=data.get("expects_completion", False),
                 )
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
