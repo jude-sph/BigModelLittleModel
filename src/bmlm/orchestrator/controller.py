@@ -28,6 +28,7 @@ class TriggerReason(Enum):
     NEEDS_REPLANNING = "needs_replanning"
     STEP_FAILED = "step_failed"
     MAX_STEPS_REACHED = "max_steps_reached"
+    REPEATED_FAILURE = "repeated_failure"
     MANUAL = "manual"
 
 
@@ -38,6 +39,7 @@ class OrchestratorConfig:
     confidence_threshold: Confidence = Confidence.MEDIUM
     max_steps_without_replan: int = 10
     max_retries_per_step: int = 3
+    max_repeated_actions: int = 2  # Trigger replan after N identical actions
     wait_after_action_ms: int = 500
 
 
@@ -62,6 +64,10 @@ class OrchestratorState:
     total_steps: int = 0
     total_replans: int = 0
     action_history: list[dict] = field(default_factory=list)
+    # Track repeated actions to detect loops
+    last_action_signature: str | None = None
+    consecutive_same_action: int = 0
+    failure_context: str | None = None  # Passed to big model on replan
 
 
 class Orchestrator:
@@ -256,6 +262,41 @@ class Orchestrator:
             "confidence": decision.confidence.value,
         })
 
+        # Track repeated actions to detect loops
+        action_signature = f"{decision.action}:{decision.target_index}:{decision.direction}"
+        if action_signature == self.state.last_action_signature:
+            self.state.consecutive_same_action += 1
+        else:
+            self.state.last_action_signature = action_signature
+            self.state.consecutive_same_action = 1
+
+        # Check for repeated action loop
+        if self.state.consecutive_same_action >= self.config.max_repeated_actions:
+            failure_context = (
+                f"The action '{decision.action}' on element {decision.target_index} "
+                f"(direction: {decision.direction}) has been attempted "
+                f"{self.state.consecutive_same_action} times without progress. "
+                f"This approach is not working. Try a different strategy."
+            )
+            self.state.failure_context = failure_context
+            log.warning(
+                "repeated_action_detected",
+                action=decision.action,
+                target_index=decision.target_index,
+                direction=decision.direction,
+                count=self.state.consecutive_same_action,
+            )
+            self._replan(TriggerReason.REPEATED_FAILURE)
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            return StepResult(
+                success=False,
+                action_taken=decision.action,
+                target_index=decision.target_index,
+                duration_ms=duration_ms,
+                triggered_replan=True,
+                trigger_reason=TriggerReason.REPEATED_FAILURE,
+            )
+
         # Update state
         self.state.steps_since_replan += 1
         self.state.total_steps += 1
@@ -320,17 +361,25 @@ class Orchestrator:
             ui_elements=ui_elements,
             screenshot=screenshot,
             previous_actions=self.state.action_history[-10:],
+            failure_context=self.state.failure_context,
         )
+
+        had_failure_context = self.state.failure_context is not None
 
         self.state.current_plan = result.plan
         self.state.steps_since_replan = 0
         self.state.total_replans += 1
+        # Reset failure tracking after replan
+        self.state.last_action_signature = None
+        self.state.consecutive_same_action = 0
+        self.state.failure_context = None
 
         log.info(
             "replanned",
             reason=reason.value,
             new_steps=len(result.plan.steps),
             generation_ms=result.generation.generation_time_ms,
+            had_failure_context=had_failure_context,
         )
 
     def run_until_complete(self, task: str, max_steps: int = 50) -> bool:

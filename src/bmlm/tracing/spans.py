@@ -91,8 +91,13 @@ def trace_big_model(
             summary_lines = [f"Goal: {result.get('plan_goal', '?')} [{plan_type}]"]
             for i, step in enumerate(steps[:10], 1):  # Max 10 steps
                 action = step.get("action", "?")
+                direction = step.get("direction")
                 target = step.get("target_description", step.get("target_index", "?"))
-                summary_lines.append(f"  {i}. {action} → {target}")
+                # Include direction for swipe/scroll actions
+                if direction and action in ("swipe", "scroll"):
+                    summary_lines.append(f"  {i}. {action} {direction} → {target}")
+                else:
+                    summary_lines.append(f"  {i}. {action} → {target}")
             span.set_attribute("output.plan_summary", "\n".join(summary_lines))
 
         # Store raw for debugging

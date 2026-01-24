@@ -34,17 +34,21 @@ class VerificationResult:
 PLANNING_SYSTEM_PROMPT_TEMPLATE = """You are an Android GUI planner. Look at the screenshot and plan the next {max_steps} steps toward the goal.
 
 RULES:
-- Output exactly 1-{max_steps} steps. Each step must be DIFFERENT.
+- Output 1-{max_steps} steps (fewer is better if sufficient)
+- ONLY plan actions for elements you can SEE in the screenshot
 - target_description = what you interact with NOW (not the end goal)
+- For swipe/scroll: ALWAYS specify direction (up/down/left/right)
+  - Horizontal sliders: swipe LEFT to decrease, RIGHT to increase
+  - Vertical lists: swipe UP to scroll down, DOWN to scroll up
 - Use target_index from screenshot if visible, null if not
 - Set expects_completion to true ONLY if these steps should fully achieve the goal
 - Output raw JSON only, no markdown
 
-Example (intermediate plan):
-{{"goal": "Send message to John", "expects_completion": false, "steps": [{{"action": "tap", "target_index": 5, "target_description": "Messages app icon", "expected_result": "Messages app opens"}}], "success_indicator": "Message sent confirmation"}}
+Example (target NOT visible - need to navigate first):
+{{"goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "top of screen", "expected_result": "Quick settings panel opens"}}], "success_indicator": "Brightness slider visible"}}
 
-Example (final plan):
-{{"goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "tap", "target_index": 12, "target_description": "brightness slider", "expected_result": "Brightness changes"}}, {{"action": "swipe", "direction": "right", "target_index": 12, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Brightness at max"}}
+Example (target IS visible - can act directly):
+{{"goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 12, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Slider at right edge"}}
 
 Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
 
@@ -72,6 +76,7 @@ class BigModel(VisionModel):
         ui_elements: list[dict],
         screenshot: Optional[Image.Image] = None,
         previous_actions: list[dict] | None = None,
+        failure_context: str | None = None,
     ) -> PlanningResult:
         """Generate a plan for completing a task.
 
@@ -80,6 +85,7 @@ class BigModel(VisionModel):
             ui_elements: List of UI elements with id, text, type, bounds
             screenshot: Screenshot of current screen with Jeeves overlays
             previous_actions: Optional list of actions already taken
+            failure_context: Optional context about why the previous approach failed
 
         Returns:
             PlanningResult with the generated plan
@@ -95,6 +101,10 @@ class BigModel(VisionModel):
                 self.system_prompt,
                 f"\nTask: {task}",
             ]
+
+            # Include failure context prominently if present
+            if failure_context:
+                prompt_parts.append(f"\n⚠️ IMPORTANT - Previous approach failed:\n{failure_context}")
 
             if previous_actions:
                 actions_str = json.dumps(previous_actions[-5:], indent=2)
@@ -134,12 +144,15 @@ class BigModel(VisionModel):
             trace_result["expects_completion"] = plan.expects_completion
             trace_result["generation_time_ms"] = result.generation_time_ms
             trace_result["raw_output"] = result.text
+            if failure_context:
+                trace_result["failure_context"] = failure_context
             # Pass step details for readable summary
             trace_result["plan_steps_detail"] = [
                 {
                     "action": step.action,
                     "target_description": step.target_description,
                     "target_index": step.target_index,
+                    "direction": step.direction,
                 }
                 for step in plan.steps
             ]

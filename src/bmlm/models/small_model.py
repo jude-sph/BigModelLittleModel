@@ -32,12 +32,14 @@ class ExecutionDecision:
 
 EXECUTOR_SYSTEM_PROMPT = """You execute plan steps. The plan specifies the action - you find the target element.
 
-COPY THE ACTION FROM THE PLAN STEP. If the plan says "swipe", output "swipe". If it says "tap", output "tap".
+COPY THE ACTION AND DIRECTION FROM THE PLAN STEP. Do not change them.
+- If the plan says "swipe" with direction "right", output action="swipe" and direction="right"
+- If the plan says "tap", output action="tap"
 
 Your only job: find the UI element that matches the plan's target description.
 
-Output JSON with the SAME action as the plan step:
-{"action": "<copy from plan>", "target_index": <element number>, "direction": "<if swipe>", "confidence": "high/medium/low", "reasoning": "<why this element>", "needs_replanning": false}
+Output JSON with the SAME action and direction as the plan step:
+{"action": "<copy from plan>", "target_index": <element number>, "direction": "<copy from plan if specified>", "confidence": "high/medium/low", "reasoning": "<why this element>", "needs_replanning": false}
 
 If no element matches, set needs_replanning=true."""
 
@@ -81,8 +83,13 @@ class SmallModel(BaseModel):
                 f"Goal: {plan.goal}",
                 f"\nPlan step {current_step.index + 1}/{len(plan.steps)}:",
                 f"  ACTION TO EXECUTE: {current_step.action}",
-                f"  TARGET TO FIND: {current_step.target_description}",
             ]
+
+            # Explicitly show direction if specified (for swipe/scroll)
+            if current_step.direction:
+                prompt_parts.append(f"  DIRECTION: {current_step.direction} (use this exactly)")
+
+            prompt_parts.append(f"  TARGET TO FIND: {current_step.target_description}")
 
             if current_step.target_index is not None:
                 prompt_parts.append(f"  Expected element index: {current_step.target_index}")
@@ -104,7 +111,10 @@ class SmallModel(BaseModel):
             if recent_actions:
                 prompt_parts.append(f"\nRecent actions: {json.dumps(recent_actions[-3:])}")
 
-            prompt_parts.append(f"\nOutput action=\"{current_step.action}\" and find the matching element.<|im_end|>")
+            if current_step.direction:
+                prompt_parts.append(f"\nOutput action=\"{current_step.action}\" with direction=\"{current_step.direction}\" and find the matching element.<|im_end|>")
+            else:
+                prompt_parts.append(f"\nOutput action=\"{current_step.action}\" and find the matching element.<|im_end|>")
             prompt_parts.append("<|im_start|>assistant\n{")
 
             prompt = "\n".join(prompt_parts)

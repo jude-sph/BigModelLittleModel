@@ -1,14 +1,19 @@
 #!/usr/bin/env python3
 """Test that models load and run correctly on MLX."""
 
+import argparse
 import sys
 import time
 
 import mlx.core as mx
 
 
-def test_model_loading(model_path: str) -> dict:
+def test_model_loading(model_path: str, max_tokens: int = 50) -> dict:
     """Test loading and running a model.
+
+    Args:
+        model_path: HuggingFace model path
+        max_tokens: Number of tokens to generate (higher = better throughput measurement)
 
     Returns:
         Dict with test results
@@ -52,8 +57,17 @@ def test_model_loading(model_path: str) -> dict:
         pass
 
     # Test generation
-    print("\n2. Testing generation...")
-    test_prompt = """<|im_start|>system
+    print(f"\n2. Testing generation ({max_tokens} tokens max)...")
+    # Use a prompt that encourages longer generation for sustained throughput tests
+    if max_tokens > 100:
+        test_prompt = """<|im_start|>system
+You are a helpful assistant.<|im_end|>
+<|im_start|>user
+Write a detailed explanation of how computers work, covering CPU, memory, and storage.<|im_end|>
+<|im_start|>assistant
+"""
+    else:
+        test_prompt = """<|im_start|>system
 You are a helpful assistant.<|im_end|>
 <|im_start|>user
 List 3 colors.<|im_end|>
@@ -67,7 +81,7 @@ List 3 colors.<|im_end|>
             model,
             tokenizer,
             prompt=test_prompt,
-            max_tokens=50,
+            max_tokens=max_tokens,
             sampler=sampler,
         )
         gen_time = time.perf_counter() - start
@@ -92,8 +106,27 @@ List 3 colors.<|im_end|>
 
 def main():
     """Test all configured models."""
+    parser = argparse.ArgumentParser(description="Test MLX models for BMLM")
+    parser.add_argument(
+        "models",
+        nargs="*",
+        help="Model paths to test (default: test all configured models)",
+    )
+    parser.add_argument(
+        "--sustained",
+        action="store_true",
+        help="Test sustained throughput with 256 tokens instead of 50",
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=int,
+        default=None,
+        help="Custom max tokens to generate (overrides --sustained)",
+    )
+    args = parser.parse_args()
+
     # Models to test (you can modify this list)
-    models_to_test = [
+    models_to_test = args.models or [
         # Big model candidates
         "mlx-community/Qwen2.5-VL-7B-Instruct-4bit",
         # Small model candidates
@@ -101,18 +134,23 @@ def main():
         "mlx-community/Qwen2.5-1.5B-Instruct-4bit",
     ]
 
-    # Allow command-line override
-    if len(sys.argv) > 1:
-        models_to_test = sys.argv[1:]
+    # Determine max tokens
+    if args.max_tokens:
+        max_tokens = args.max_tokens
+    elif args.sustained:
+        max_tokens = 256
+    else:
+        max_tokens = 50
 
     print("BMLM Model Test Suite")
     print("=" * 60)
     print(f"Testing {len(models_to_test)} model(s)")
+    print(f"Max tokens: {max_tokens}" + (" (sustained)" if args.sustained else ""))
 
     all_results = []
     for model_path in models_to_test:
         try:
-            results = test_model_loading(model_path)
+            results = test_model_loading(model_path, max_tokens=max_tokens)
             all_results.append(results)
         except Exception as e:
             print(f"\n✗ Error testing {model_path}: {e}")
