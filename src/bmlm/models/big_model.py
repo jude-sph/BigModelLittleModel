@@ -33,23 +33,26 @@ class VerificationResult:
 
 PLANNING_SYSTEM_PROMPT_TEMPLATE = """You are an Android GUI planner. Create a plan based on what you can see NOW.
 
-STEP 1: Look at the UI elements list below. What screen is this? (home screen, settings, app, etc.)
-STEP 2: Is your target visible in the list? If NO, plan to navigate first. If YES, plan to interact with it.
+STEP 1: Look at the UI elements list below. What screen is this?
+STEP 2: Search the list - is your TARGET element there? (e.g., "brightness", "slider", etc.)
+STEP 3: If target is NOT in list, plan to navigate. If target IS in list, plan to interact with it.
 
 RULES:
-- You MUST include "current_screen" in your output describing what you see
+- You MUST include "current_screen" in your output
+- CRITICAL: Search the UI elements list for your target. If it's NOT there, navigate first!
 - Output 1-{max_steps} steps
-- ONLY use elements from the UI elements list - do NOT invent elements
-- If your target is NOT in the list, your first step must NAVIGATE to find it
 - For swipe/scroll: specify direction (up/down/left/right)
-- Set expects_completion to true only if these steps will complete the goal
+- Set expects_completion to true only if target IS in list AND these steps will complete the goal
 - Output raw JSON only
 
-Example (home screen - target NOT in list, must navigate first):
-{{"current_screen": "home screen with app icons", "goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "notification bar area", "expected_result": "Quick settings opens"}}], "success_indicator": "Brightness slider visible"}}
+Example (home screen - "brightness" NOT in element list):
+{{"current_screen": "home screen with app icons", "goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "top of screen", "expected_result": "Quick settings opens"}}], "success_indicator": "Brightness slider in list"}}
 
-Example (quick settings - target IS in list):
-{{"current_screen": "quick settings panel", "goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Slider at right edge"}}
+Example (compact quick settings - "brightness" still NOT in list, need to expand):
+{{"current_screen": "compact quick settings", "goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "quick settings panel", "expected_result": "Panel expands"}}], "success_indicator": "Brightness slider in list"}}
+
+Example (expanded quick settings - "brightness" IS in list at index 8):
+{{"current_screen": "expanded quick settings with brightness slider", "goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Slider at right edge"}}
 
 Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
 

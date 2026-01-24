@@ -30,6 +30,41 @@ class JeevesElement:
         left, top, right, bottom = self.bounds
         return ((left + right) // 2, (top + bottom) // 2)
 
+    def get_swipe_coords(self, direction: str, margin: int = 20) -> tuple[tuple[int, int], tuple[int, int]]:
+        """Get start and end coordinates for a swipe within this element.
+
+        Args:
+            direction: Swipe direction (up, down, left, right)
+            margin: Pixels to inset from element edges
+
+        Returns:
+            ((start_x, start_y), (end_x, end_y)) coordinates for the swipe
+        """
+        left, top, right, bottom = self.bounds
+        center_x, center_y = self.center
+
+        # Inset bounds by margin
+        safe_left = left + margin
+        safe_right = right - margin
+        safe_top = top + margin
+        safe_bottom = bottom - margin
+
+        if direction == "right":
+            # Swipe from left to right (horizontal, centered vertically)
+            return ((safe_left, center_y), (safe_right, center_y))
+        elif direction == "left":
+            # Swipe from right to left
+            return ((safe_right, center_y), (safe_left, center_y))
+        elif direction == "down":
+            # Swipe from top to bottom (vertical, centered horizontally)
+            return ((center_x, safe_top), (center_x, safe_bottom))
+        elif direction == "up":
+            # Swipe from bottom to top
+            return ((center_x, safe_bottom), (center_x, safe_top))
+        else:
+            # Default: center to center (no movement)
+            return ((center_x, center_y), (center_x, center_y))
+
     def to_dict(self) -> dict:
         """Convert to dictionary for model input."""
         return {
@@ -258,6 +293,23 @@ class JeevesClient:
         element = self.get_element_by_index(index)
         if element:
             return element.center
+        return None
+
+    def get_swipe_coordinates(
+        self, index: int, direction: str
+    ) -> Optional[tuple[tuple[int, int], tuple[int, int]]]:
+        """Get swipe start/end coordinates within an element's bounds.
+
+        Args:
+            index: The Jeeves element index
+            direction: Swipe direction (up, down, left, right)
+
+        Returns:
+            ((start_x, start_y), (end_x, end_y)) or None if element not found
+        """
+        element = self.get_element_by_index(index)
+        if element:
+            return element.get_swipe_coords(direction)
         return None
 
     def refresh(self) -> list[dict]:

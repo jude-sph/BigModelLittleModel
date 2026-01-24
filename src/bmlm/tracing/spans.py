@@ -76,6 +76,8 @@ def trace_big_model(
             span.set_attribute("output.plan_steps", result["plan_steps"])
         if "plan_goal" in result:
             span.set_attribute("output.plan_goal", result["plan_goal"])
+        if "current_screen" in result:
+            span.set_attribute("output.current_screen", result["current_screen"])
         if "expects_completion" in result:
             span.set_attribute("output.expects_completion", result["expects_completion"])
         if "generation_time_ms" in result:

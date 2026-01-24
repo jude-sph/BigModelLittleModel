@@ -43,6 +43,10 @@ class ActionExecutor:
     Uses Jeeves for UI element indexing and AndroidWorld for action execution.
     """
 
+    # Default screen dimensions (common Android resolution)
+    DEFAULT_SCREEN_WIDTH = 1080
+    DEFAULT_SCREEN_HEIGHT = 2400
+
     def __init__(self, env: Any, device_serial: str = "emulator-5554"):
         """Initialize with an AndroidWorld environment.
 
@@ -53,6 +57,7 @@ class ActionExecutor:
         self.env = env
         self.jeeves = JeevesClient(device_serial=device_serial)
         self._ui_elements_cache: list[dict] = []
+        self._screen_size: tuple[int, int] | None = None
 
     def get_ui_elements(self) -> list[dict]:
         """Get current UI elements from Jeeves.
@@ -222,24 +227,98 @@ class ActionExecutor:
         Args:
             direction: Swipe direction (up, down, left, right)
             target_index: Optional Jeeves element index to swipe on.
-                         If provided, swipe starts from element center.
+                         If provided, swipe is bounded within the element.
         """
-        from android_world.env.json_action import SWIPE, JSONAction
-
-        # If target specified, start swipe from element's center
+        # If target specified, do a bounded swipe within element using drag_and_drop
         if target_index is not None:
-            coords = self._get_coords_by_index(target_index)
-            if coords:
-                log.info("swipe_on_element", index=target_index, coords=coords, direction=direction)
-                action = JSONAction(action_type=SWIPE, direction=direction, x=coords[0], y=coords[1])
+            swipe_coords = self.jeeves.get_swipe_coordinates(target_index, direction)
+            if swipe_coords:
+                start, end = swipe_coords
+                log.info(
+                    "swipe_on_element_bounded",
+                    index=target_index,
+                    direction=direction,
+                    start=start,
+                    end=end,
+                )
+                # Use drag_and_drop for precise start/end control
+                from android_world.env.json_action import JSONAction
+                action = JSONAction(
+                    action_type="drag_and_drop",
+                    touch_xy=list(start),
+                    lift_xy=list(end),
+                )
+                self.env.execute_action(action)
+                return True
             else:
                 log.warning("swipe_target_not_found", target_index=target_index, direction=direction)
-                action = JSONAction(action_type=SWIPE, direction=direction)
-        else:
-            action = JSONAction(action_type=SWIPE, direction=direction)
 
+        # Fallback: generic screen swipe
+        from android_world.env.json_action import SWIPE, JSONAction
+        action = JSONAction(action_type=SWIPE, direction=direction)
         self.env.execute_action(action)
         return True
+
+    def _get_screen_size(self) -> tuple[int, int]:
+        """Get screen dimensions, caching the result.
+
+        Returns:
+            (width, height) in pixels
+        """
+        if self._screen_size is not None:
+            return self._screen_size
+
+        # Try to get from screenshot
+        try:
+            state = self.env.get_state()
+            if hasattr(state, "pixels") and state.pixels is not None:
+                import numpy as np
+                pixels = np.array(state.pixels)
+                # pixels shape is (height, width, channels)
+                height, width = pixels.shape[:2]
+                self._screen_size = (width, height)
+                log.info("screen_size_detected", width=width, height=height)
+                return self._screen_size
+        except Exception as e:
+            log.debug("screen_size_detection_failed", error=str(e))
+
+        # Fallback to defaults
+        self._screen_size = (self.DEFAULT_SCREEN_WIDTH, self.DEFAULT_SCREEN_HEIGHT)
+        return self._screen_size
+
+    def _apply_edge_safety(self, coords: tuple[int, int], direction: str) -> tuple[int, int]:
+        """Adjust coordinates to avoid Android edge gesture zones.
+
+        Android's gesture navigation triggers back when swiping from screen edges.
+        This moves swipe start points away from edges for horizontal swipes.
+
+        Args:
+            coords: Original (x, y) coordinates
+            direction: Swipe direction
+
+        Returns:
+            Adjusted (x, y) coordinates safe from edge gestures
+        """
+        screen_width, screen_height = self._get_screen_size()
+
+        # Edge margin to avoid gesture zones (pixels)
+        # Android gesture zones are typically ~20-40dp from edge, using 80px for safety
+        edge_margin = 80
+
+        x, y = coords
+
+        # For horizontal swipes, ensure we're not starting from edge zones
+        if direction in ("left", "right"):
+            # Don't start too close to left edge
+            if x < edge_margin:
+                x = edge_margin
+                log.debug("adjusted_x_from_left_edge", original=coords[0], adjusted=x)
+            # Don't start too close to right edge
+            elif x > screen_width - edge_margin:
+                x = screen_width - edge_margin
+                log.debug("adjusted_x_from_right_edge", original=coords[0], adjusted=x)
+
+        return (x, y)
 
     def _scroll(self, direction: str, target_index: int | None = None) -> bool:
         """Execute a scroll action.
@@ -247,22 +326,35 @@ class ActionExecutor:
         Args:
             direction: Scroll direction (up, down, left, right)
             target_index: Optional Jeeves element index to scroll on.
-                         If provided, scroll starts from element center.
+                         If provided, scroll is bounded within the element.
         """
-        from android_world.env.json_action import SCROLL, JSONAction
-
-        # If target specified, start scroll from element's center
+        # If target specified, do a bounded scroll within element using drag_and_drop
         if target_index is not None:
-            coords = self._get_coords_by_index(target_index)
-            if coords:
-                log.info("scroll_on_element", index=target_index, coords=coords, direction=direction)
-                action = JSONAction(action_type=SCROLL, direction=direction, x=coords[0], y=coords[1])
+            swipe_coords = self.jeeves.get_swipe_coordinates(target_index, direction)
+            if swipe_coords:
+                start, end = swipe_coords
+                log.info(
+                    "scroll_on_element_bounded",
+                    index=target_index,
+                    direction=direction,
+                    start=start,
+                    end=end,
+                )
+                # Use drag_and_drop for precise start/end control
+                from android_world.env.json_action import JSONAction
+                action = JSONAction(
+                    action_type="drag_and_drop",
+                    touch_xy=list(start),
+                    lift_xy=list(end),
+                )
+                self.env.execute_action(action)
+                return True
             else:
                 log.warning("scroll_target_not_found", target_index=target_index, direction=direction)
-                action = JSONAction(action_type=SCROLL, direction=direction)
-        else:
-            action = JSONAction(action_type=SCROLL, direction=direction)
 
+        # Fallback: generic screen scroll
+        from android_world.env.json_action import SCROLL, JSONAction
+        action = JSONAction(action_type=SCROLL, direction=direction)
         self.env.execute_action(action)
         return True
 
