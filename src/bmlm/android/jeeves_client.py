@@ -30,12 +30,20 @@ class JeevesElement:
         left, top, right, bottom = self.bounds
         return ((left + right) // 2, (top + bottom) // 2)
 
-    def get_swipe_coords(self, direction: str, margin: int = 20) -> tuple[tuple[int, int], tuple[int, int]]:
+    def get_swipe_coords(
+        self,
+        direction: str,
+        margin: int = 20,
+        screen_width: int = 1080,
+        screen_height: int = 2400,
+    ) -> tuple[tuple[int, int], tuple[int, int]]:
         """Get start and end coordinates for a swipe within this element.
 
         Args:
             direction: Swipe direction (up, down, left, right)
             margin: Pixels to inset from element edges
+            screen_width: Screen width for edge safety calculations
+            screen_height: Screen height for edge safety calculations
 
         Returns:
             ((start_x, start_y), (end_x, end_y)) coordinates for the swipe
@@ -49,18 +57,28 @@ class JeevesElement:
         safe_top = top + margin
         safe_bottom = bottom - margin
 
+        # Edge safety zones - swipe START must not be in these zones
+        # (Android gesture navigation triggers back when swiping from edges)
+        EDGE_SAFE_MIN = 100  # Minimum distance from left/top edges
+        edge_safe_max_x = screen_width - EDGE_SAFE_MIN   # Maximum x (distance from right)
+        edge_safe_max_y = screen_height - EDGE_SAFE_MIN  # Maximum y (distance from bottom)
+
         if direction == "right":
-            # Swipe from left to right (horizontal, centered vertically)
-            return ((safe_left, center_y), (safe_right, center_y))
+            # Swipe from left to right - start not too close to LEFT edge
+            start_x = max(safe_left, EDGE_SAFE_MIN)
+            return ((start_x, center_y), (safe_right, center_y))
         elif direction == "left":
-            # Swipe from right to left
-            return ((safe_right, center_y), (safe_left, center_y))
+            # Swipe from right to left - start not too close to RIGHT edge
+            start_x = min(safe_right, edge_safe_max_x)
+            return ((start_x, center_y), (safe_left, center_y))
         elif direction == "down":
-            # Swipe from top to bottom (vertical, centered horizontally)
-            return ((center_x, safe_top), (center_x, safe_bottom))
+            # Swipe from top to bottom - start not too close to TOP edge
+            start_y = max(safe_top, EDGE_SAFE_MIN)
+            return ((center_x, start_y), (center_x, safe_bottom))
         elif direction == "up":
-            # Swipe from bottom to top
-            return ((center_x, safe_bottom), (center_x, safe_top))
+            # Swipe from bottom to top - start not too close to BOTTOM edge
+            start_y = min(safe_bottom, edge_safe_max_y)
+            return ((center_x, start_y), (center_x, safe_top))
         else:
             # Default: center to center (no movement)
             return ((center_x, center_y), (center_x, center_y))
