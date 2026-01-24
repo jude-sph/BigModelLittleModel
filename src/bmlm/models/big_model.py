@@ -37,21 +37,21 @@ First, identify what screen you are on and what elements are visible. Then plan 
 
 RULES:
 - Output 1-{max_steps} steps (fewer is better if sufficient)
-- If your target is NOT visible on screen, your first step must be to NAVIGATE to make it visible
-- Do NOT reference elements that aren't in the screenshot
-- target_description = what you interact with NOW (must be visible)
+- CRITICAL: Only interact with elements you can SEE in the screenshot right now
+- If your target is NOT visible, first navigate to make it visible (swipe, tap menu, etc.)
+- target_description = describe the visible element you will interact with
 - For swipe/scroll: ALWAYS specify direction (up/down/left/right)
   - Horizontal sliders: swipe LEFT to decrease, RIGHT to increase
   - Vertical lists: swipe UP to scroll down, DOWN to scroll up
-- Use target_index from screenshot if visible, null if not
+- Use target_index from screenshot if visible, null if not visible
 - Set expects_completion to true ONLY if these steps should fully achieve the goal
 - Output raw JSON only, no markdown
 
-Example (on home screen, target NOT visible):
-{{"goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "top of screen", "expected_result": "Quick settings panel opens"}}], "success_indicator": "Brightness slider visible"}}
+Example (on home screen, need to open app):
+{{"goal": "Send message to John", "expects_completion": false, "steps": [{{"action": "tap", "target_index": 5, "target_description": "Messages app icon", "expected_result": "Messages app opens"}}], "success_indicator": "Message list visible"}}
 
-Example (quick settings open, target IS visible):
-{{"goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 12, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Slider at right edge"}}
+Example (in settings, slider visible):
+{{"goal": "Set volume to max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "volume slider", "expected_result": "Volume at maximum"}}], "success_indicator": "Slider at right edge"}}
 
 Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
 
@@ -113,7 +113,19 @@ class BigModel(VisionModel):
                 actions_str = json.dumps(previous_actions[-5:], indent=2)
                 prompt_parts.append(f"\nRecent actions taken:\n{actions_str}")
 
-            prompt_parts.append("\nLook at the screenshot and create a JSON plan. Output ONLY JSON starting with {")
+            # Include UI elements so model knows exactly what's available
+            if ui_elements:
+                elements_summary = []
+                for elem in ui_elements[:25]:  # Limit to avoid prompt bloat
+                    idx = elem.get("index", "?")
+                    text = elem.get("text", "")
+                    desc = elem.get("content_desc", "")
+                    elem_type = elem.get("type", "")
+                    label = text or desc or elem_type or "unknown"
+                    elements_summary.append(f"  [{idx}] {label}")
+                prompt_parts.append(f"\nVisible UI elements (use these target_index values):\n" + "\n".join(elements_summary))
+
+            prompt_parts.append("\nLook at the screenshot and create a JSON plan. Only reference elements from the list above. Output ONLY JSON starting with {")
 
             prompt = "\n".join(prompt_parts)
 
