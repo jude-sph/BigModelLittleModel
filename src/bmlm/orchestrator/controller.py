@@ -395,7 +395,10 @@ class Orchestrator:
         self.start_task(task)
 
         for _ in range(max_steps):
-            if self.state.current_plan and self.state.current_plan.is_complete:
+            result = self.step()
+
+            # Check if goal was verified as complete
+            if result.action_taken == "goal_complete":
                 log.info(
                     "task_complete",
                     total_steps=self.state.total_steps,
@@ -403,7 +406,6 @@ class Orchestrator:
                 )
                 return True
 
-            result = self.step()
             if not result.success and result.action_taken != "replan":
                 log.warning("step_failed", result=result)
 

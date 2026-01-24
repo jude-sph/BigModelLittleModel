@@ -125,9 +125,9 @@ class ActionExecutor:
                 elif action_type == "type":
                     success = self._type_text(text or "")
                 elif action_type == "swipe":
-                    success = self._swipe(direction or "up")
+                    success = self._swipe(direction or "up", target_index)
                 elif action_type == "scroll":
-                    success = self._scroll(direction or "down")
+                    success = self._scroll(direction or "down", target_index)
                 elif action_type == "navigate_home":
                     success = self._navigate_home()
                 elif action_type == "navigate_back":
@@ -216,19 +216,53 @@ class ActionExecutor:
         self.env.execute_action(action)
         return True
 
-    def _swipe(self, direction: str) -> bool:
-        """Execute a swipe action."""
+    def _swipe(self, direction: str, target_index: int | None = None) -> bool:
+        """Execute a swipe action.
+
+        Args:
+            direction: Swipe direction (up, down, left, right)
+            target_index: Optional Jeeves element index to swipe on.
+                         If provided, swipe starts from element center.
+        """
         from android_world.env.json_action import SWIPE, JSONAction
 
-        action = JSONAction(action_type=SWIPE, direction=direction)
+        # If target specified, start swipe from element's center
+        if target_index is not None:
+            coords = self._get_coords_by_index(target_index)
+            if coords:
+                log.info("swipe_on_element", index=target_index, coords=coords, direction=direction)
+                action = JSONAction(action_type=SWIPE, direction=direction, x=coords[0], y=coords[1])
+            else:
+                log.warning("swipe_target_not_found", target_index=target_index, direction=direction)
+                action = JSONAction(action_type=SWIPE, direction=direction)
+        else:
+            action = JSONAction(action_type=SWIPE, direction=direction)
+
         self.env.execute_action(action)
         return True
 
-    def _scroll(self, direction: str) -> bool:
-        """Execute a scroll action."""
+    def _scroll(self, direction: str, target_index: int | None = None) -> bool:
+        """Execute a scroll action.
+
+        Args:
+            direction: Scroll direction (up, down, left, right)
+            target_index: Optional Jeeves element index to scroll on.
+                         If provided, scroll starts from element center.
+        """
         from android_world.env.json_action import SCROLL, JSONAction
 
-        action = JSONAction(action_type=SCROLL, direction=direction)
+        # If target specified, start scroll from element's center
+        if target_index is not None:
+            coords = self._get_coords_by_index(target_index)
+            if coords:
+                log.info("scroll_on_element", index=target_index, coords=coords, direction=direction)
+                action = JSONAction(action_type=SCROLL, direction=direction, x=coords[0], y=coords[1])
+            else:
+                log.warning("scroll_target_not_found", target_index=target_index, direction=direction)
+                action = JSONAction(action_type=SCROLL, direction=direction)
+        else:
+            action = JSONAction(action_type=SCROLL, direction=direction)
+
         self.env.execute_action(action)
         return True
 
