@@ -88,7 +88,10 @@ def trace_big_model(
             steps = result["plan_steps_detail"]
             expects = result.get("expects_completion", False)
             plan_type = "FINAL" if expects else "INTERMEDIATE"
+            current_screen = result.get("current_screen", "")
             summary_lines = [f"Goal: {result.get('plan_goal', '?')} [{plan_type}]"]
+            if current_screen:
+                summary_lines.append(f"Screen: {current_screen}")
             for i, step in enumerate(steps[:10], 1):  # Max 10 steps
                 action = step.get("action", "?")
                 direction = step.get("direction")

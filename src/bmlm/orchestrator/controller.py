@@ -135,6 +135,17 @@ class Orchestrator:
         self.state.current_plan = result.plan
         self.state.total_replans += 1
 
+        # Extract current_screen from raw response for display
+        current_screen = None
+        try:
+            import json
+            raw = result.raw_response
+            if "{" in raw:
+                data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+                current_screen = data.get("current_screen")
+        except:
+            pass
+
         # Check for empty or failed plan
         if not result.plan.steps:
             print(" (empty plan)")
@@ -146,6 +157,8 @@ class Orchestrator:
         else:
             steps_preview = ", ".join(s.action for s in result.plan.steps[:3])
             print(f" [{len(result.plan.steps)} steps: {steps_preview}]")
+            if current_screen:
+                _status(f"Screen: {current_screen}")
 
         log.info(
             "plan_generated",
@@ -411,9 +424,22 @@ class Orchestrator:
         self.state.consecutive_same_action = 0
         self.state.failure_context = None
 
+        # Extract current_screen from raw response for display
+        current_screen = None
+        try:
+            import json
+            raw = result.raw_response
+            if "{" in raw:
+                data = json.loads(raw[raw.find("{"):raw.rfind("}") + 1])
+                current_screen = data.get("current_screen")
+        except:
+            pass
+
         if result.plan.steps:
             steps_preview = ", ".join(s.action for s in result.plan.steps[:3])
             print(f" [{len(result.plan.steps)} steps: {steps_preview}]")
+            if current_screen:
+                _status(f"Screen: {current_screen}")
         else:
             print(" (empty plan)")
 

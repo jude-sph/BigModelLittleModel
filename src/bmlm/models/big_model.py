@@ -31,27 +31,25 @@ class VerificationResult:
     generation: GenerationResult
 
 
-PLANNING_SYSTEM_PROMPT_TEMPLATE = """You are an Android GUI planner. Look at the screenshot and plan the next {max_steps} steps toward the goal.
+PLANNING_SYSTEM_PROMPT_TEMPLATE = """You are an Android GUI planner. Create a plan based on what you can see NOW.
 
-First, identify what screen you are on and what elements are visible. Then plan accordingly.
+STEP 1: Look at the UI elements list below. What screen is this? (home screen, settings, app, etc.)
+STEP 2: Is your target visible in the list? If NO, plan to navigate first. If YES, plan to interact with it.
 
 RULES:
-- Output 1-{max_steps} steps (fewer is better if sufficient)
-- CRITICAL: Only interact with elements you can SEE in the screenshot right now
-- If your target is NOT visible, first navigate to make it visible (swipe, tap menu, etc.)
-- target_description = describe the visible element you will interact with
-- For swipe/scroll: ALWAYS specify direction (up/down/left/right)
-  - Horizontal sliders: swipe LEFT to decrease, RIGHT to increase
-  - Vertical lists: swipe UP to scroll down, DOWN to scroll up
-- Use target_index from screenshot if visible, null if not visible
-- Set expects_completion to true ONLY if these steps should fully achieve the goal
-- Output raw JSON only, no markdown
+- You MUST include "current_screen" in your output describing what you see
+- Output 1-{max_steps} steps
+- ONLY use elements from the UI elements list - do NOT invent elements
+- If your target is NOT in the list, your first step must NAVIGATE to find it
+- For swipe/scroll: specify direction (up/down/left/right)
+- Set expects_completion to true only if these steps will complete the goal
+- Output raw JSON only
 
-Example (on home screen, need to open app):
-{{"goal": "Send message to John", "expects_completion": false, "steps": [{{"action": "tap", "target_index": 5, "target_description": "Messages app icon", "expected_result": "Messages app opens"}}], "success_indicator": "Message list visible"}}
+Example (home screen - target NOT in list, must navigate first):
+{{"current_screen": "home screen with app icons", "goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "notification bar area", "expected_result": "Quick settings opens"}}], "success_indicator": "Brightness slider visible"}}
 
-Example (in settings, slider visible):
-{{"goal": "Set volume to max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "volume slider", "expected_result": "Volume at maximum"}}], "success_indicator": "Slider at right edge"}}
+Example (quick settings - target IS in list):
+{{"current_screen": "quick settings panel", "goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Slider at right edge"}}
 
 Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
 
@@ -123,9 +121,12 @@ class BigModel(VisionModel):
                     elem_type = elem.get("type", "")
                     label = text or desc or elem_type or "unknown"
                     elements_summary.append(f"  [{idx}] {label}")
-                prompt_parts.append(f"\nVisible UI elements (use these target_index values):\n" + "\n".join(elements_summary))
+                prompt_parts.append(f"\n=== VISIBLE UI ELEMENTS (this is what's on screen NOW) ===\n" + "\n".join(elements_summary))
+                prompt_parts.append("\n=== END OF VISIBLE ELEMENTS ===")
+            else:
+                prompt_parts.append("\n=== NO UI ELEMENTS DETECTED ===")
 
-            prompt_parts.append("\nLook at the screenshot and create a JSON plan. Only reference elements from the list above. Output ONLY JSON starting with {")
+            prompt_parts.append("\nCheck the elements list above. Is your target there? If NOT, navigate first. Output JSON starting with {")
 
             prompt = "\n".join(prompt_parts)
 
@@ -151,7 +152,7 @@ class BigModel(VisionModel):
                 )
 
             # Parse the plan from response
-            plan = self._parse_plan(result.text, task)
+            plan, current_screen = self._parse_plan(result.text, task)
 
             # Record trace data
             trace_result["plan_steps"] = len(plan.steps)
@@ -159,6 +160,8 @@ class BigModel(VisionModel):
             trace_result["expects_completion"] = plan.expects_completion
             trace_result["generation_time_ms"] = result.generation_time_ms
             trace_result["raw_output"] = result.text
+            if current_screen:
+                trace_result["current_screen"] = current_screen
             if failure_context:
                 trace_result["failure_context"] = failure_context
             # Pass step details for readable summary
@@ -268,8 +271,13 @@ class BigModel(VisionModel):
                 generation=result,
             )
 
-    def _parse_plan(self, response: str, task: str) -> Plan:
-        """Parse a Plan from the model's JSON response."""
+    def _parse_plan(self, response: str, task: str) -> tuple[Plan, str | None]:
+        """Parse a Plan from the model's JSON response.
+
+        Returns:
+            Tuple of (Plan, current_screen description or None)
+        """
+        current_screen = None
         try:
             # Strip markdown code blocks if present
             if "```json" in response:
@@ -283,6 +291,9 @@ class BigModel(VisionModel):
             if json_start >= 0 and json_end > json_start:
                 json_str = response[json_start:json_end]
                 data = json.loads(json_str)
+
+                # Extract current_screen if present
+                current_screen = data.get("current_screen")
 
                 steps = []
                 for i, step_data in enumerate(data.get("steps", [])):
@@ -311,9 +322,9 @@ class BigModel(VisionModel):
                     steps=steps,
                     success_indicator=data.get("success_indicator", ""),
                     expects_completion=data.get("expects_completion", False),
-                )
+                ), current_screen
         except (json.JSONDecodeError, KeyError, TypeError):
             pass
 
         # Fallback: return empty plan if parsing fails
-        return Plan(goal=task, steps=[], success_indicator="", parse_error=True)
+        return Plan(goal=task, steps=[], success_indicator="", parse_error=True), None
