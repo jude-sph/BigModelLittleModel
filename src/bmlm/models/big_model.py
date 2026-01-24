@@ -42,6 +42,7 @@ RULES:
 - CRITICAL: Search the UI elements list for your target. If it's NOT there, navigate first!
 - Output 1-{max_steps} steps
 - For swipe/scroll: specify direction (up/down/left/right)
+- SLIDER DIRECTIONS: To INCREASE/MAXIMIZE a horizontal slider, swipe RIGHT. To DECREASE/MINIMIZE, swipe LEFT.
 - Set expects_completion to true only if target IS in list AND these steps will complete the goal
 - Output raw JSON only
 
@@ -51,10 +52,13 @@ Example (home screen - "brightness" NOT in element list):
 Example (compact quick settings - "brightness" still NOT in list, need to expand):
 {{"current_screen": "compact quick settings", "goal": "Set brightness max", "expects_completion": false, "steps": [{{"action": "swipe", "direction": "down", "target_index": null, "target_description": "quick settings panel", "expected_result": "Panel expands"}}], "success_indicator": "Brightness slider in list"}}
 
-Example (expanded quick settings - "brightness" IS in list at index 8):
-{{"current_screen": "expanded quick settings with brightness slider", "goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "brightness slider", "expected_result": "Brightness at maximum"}}], "success_indicator": "Slider at right edge"}}
+Example (expanded quick settings - "brightness" IS in list at index 8, swipe RIGHT to maximize):
+{{"current_screen": "expanded quick settings with brightness slider", "goal": "Set brightness max", "expects_completion": true, "steps": [{{"action": "swipe", "direction": "right", "target_index": 8, "target_description": "brightness slider", "expected_result": "Slider moved to maximum"}}], "success_indicator": "Slider at right edge"}}
 
-Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait"""
+Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait, open_app
+
+For open_app: set target_index to null and put app name in input_text field.
+Example: {"action": "open_app", "target_index": null, "input_text": "Settings", "target_description": "Settings app", "expected_result": "Settings app opens"}"""
 
 
 VERIFICATION_PROMPT_TEMPLATE = """Look at the screenshot. Has this goal been achieved: "{goal}"?

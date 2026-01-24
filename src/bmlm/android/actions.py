@@ -48,9 +48,10 @@ class ActionExecutor:
 
         Args:
             env: AndroidWorld environment instance
-            device_serial: ADB device serial for Jeeves queries
+            device_serial: ADB device serial
         """
         self.env = env
+        self.device_serial = device_serial
         self.jeeves = JeevesClient(device_serial=device_serial)
         self._ui_elements_cache: list[dict] = []
 
@@ -224,7 +225,7 @@ class ActionExecutor:
             target_index: Optional Jeeves element index to swipe on.
                          If provided, swipe is bounded within the element.
         """
-        # If target specified, do a bounded swipe within element using drag_and_drop
+        # If target specified, do a bounded swipe within element using ADB swipe
         if target_index is not None:
             swipe_coords = self.jeeves.get_swipe_coordinates(target_index, direction)
             if swipe_coords:
@@ -236,23 +237,37 @@ class ActionExecutor:
                     start=start,
                     end=end,
                 )
-                # Use drag_and_drop for precise start/end control
-                from android_world.env.json_action import JSONAction
-                action = JSONAction(
-                    action_type="drag_and_drop",
-                    touch_xy=list(start),
-                    lift_xy=list(end),
-                )
-                self.env.execute_action(action)
+                # Use ADB swipe command directly for precise start/end control
+                self._adb_swipe(start[0], start[1], end[0], end[1])
                 return True
             else:
-                log.warning("swipe_target_not_found", target_index=target_index, direction=direction)
+                log.info("swipe_bounded_fallback", target_index=target_index, direction=direction,
+                         reason="element not found or too small for bounded swipe")
 
         # Fallback: generic screen swipe
         from android_world.env.json_action import SWIPE, JSONAction
         action = JSONAction(action_type=SWIPE, direction=direction)
         self.env.execute_action(action)
         return True
+
+    def _adb_swipe(self, start_x: int, start_y: int, end_x: int, end_y: int, duration_ms: int = 300) -> None:
+        """Execute a swipe via ADB command directly.
+
+        Args:
+            start_x, start_y: Start coordinates
+            end_x, end_y: End coordinates
+            duration_ms: Swipe duration in milliseconds
+        """
+        import subprocess
+        cmd = [
+            "adb", "-s", self.device_serial,
+            "shell", "input", "swipe",
+            str(start_x), str(start_y), str(end_x), str(end_y), str(duration_ms)
+        ]
+        try:
+            subprocess.run(cmd, capture_output=True, timeout=10)
+        except Exception as e:
+            log.error("adb_swipe_failed", error=str(e))
 
     def _scroll(self, direction: str, target_index: int | None = None) -> bool:
         """Execute a scroll action.
@@ -262,7 +277,7 @@ class ActionExecutor:
             target_index: Optional Jeeves element index to scroll on.
                          If provided, scroll is bounded within the element.
         """
-        # If target specified, do a bounded scroll within element using drag_and_drop
+        # If target specified, do a bounded scroll within element using ADB swipe
         if target_index is not None:
             swipe_coords = self.jeeves.get_swipe_coordinates(target_index, direction)
             if swipe_coords:
@@ -274,17 +289,12 @@ class ActionExecutor:
                     start=start,
                     end=end,
                 )
-                # Use drag_and_drop for precise start/end control
-                from android_world.env.json_action import JSONAction
-                action = JSONAction(
-                    action_type="drag_and_drop",
-                    touch_xy=list(start),
-                    lift_xy=list(end),
-                )
-                self.env.execute_action(action)
+                # Use ADB swipe command directly for precise start/end control
+                self._adb_swipe(start[0], start[1], end[0], end[1])
                 return True
             else:
-                log.warning("scroll_target_not_found", target_index=target_index, direction=direction)
+                log.info("scroll_bounded_fallback", target_index=target_index, direction=direction,
+                         reason="element not found or too small for bounded scroll")
 
         # Fallback: generic screen scroll
         from android_world.env.json_action import SCROLL, JSONAction

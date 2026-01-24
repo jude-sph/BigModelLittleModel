@@ -36,7 +36,8 @@ class JeevesElement:
         margin: int = 20,
         screen_width: int = 1080,
         screen_height: int = 2400,
-    ) -> tuple[tuple[int, int], tuple[int, int]]:
+        min_swipe_distance: int = 150,
+    ) -> Optional[tuple[tuple[int, int], tuple[int, int]]]:
         """Get start and end coordinates for a swipe within this element.
 
         Args:
@@ -44,9 +45,11 @@ class JeevesElement:
             margin: Pixels to inset from element edges
             screen_width: Screen width for edge safety calculations
             screen_height: Screen height for edge safety calculations
+            min_swipe_distance: Minimum distance for a valid swipe
 
         Returns:
-            ((start_x, start_y), (end_x, end_y)) coordinates for the swipe
+            ((start_x, start_y), (end_x, end_y)) coordinates for the swipe,
+            or None if the element is too small for a valid swipe
         """
         left, top, right, bottom = self.bounds
         center_x, center_y = self.center
@@ -63,25 +66,50 @@ class JeevesElement:
         edge_safe_max_x = screen_width - EDGE_SAFE_MIN   # Maximum x (distance from right)
         edge_safe_max_y = screen_height - EDGE_SAFE_MIN  # Maximum y (distance from bottom)
 
+        start: tuple[int, int]
+        end: tuple[int, int]
+
         if direction == "right":
             # Swipe from left to right - start not too close to LEFT edge
             start_x = max(safe_left, EDGE_SAFE_MIN)
-            return ((start_x, center_y), (safe_right, center_y))
+            start = (start_x, center_y)
+            end = (safe_right, center_y)
         elif direction == "left":
             # Swipe from right to left - start not too close to RIGHT edge
             start_x = min(safe_right, edge_safe_max_x)
-            return ((start_x, center_y), (safe_left, center_y))
+            start = (start_x, center_y)
+            end = (safe_left, center_y)
         elif direction == "down":
             # Swipe from top to bottom - start not too close to TOP edge
             start_y = max(safe_top, EDGE_SAFE_MIN)
-            return ((center_x, start_y), (center_x, safe_bottom))
+            start = (center_x, start_y)
+            end = (center_x, safe_bottom)
         elif direction == "up":
             # Swipe from bottom to top - start not too close to BOTTOM edge
             start_y = min(safe_bottom, edge_safe_max_y)
-            return ((center_x, start_y), (center_x, safe_top))
+            start = (center_x, start_y)
+            end = (center_x, safe_top)
         else:
-            # Default: center to center (no movement)
-            return ((center_x, center_y), (center_x, center_y))
+            return None
+
+        # Calculate swipe distance
+        distance = ((end[0] - start[0]) ** 2 + (end[1] - start[1]) ** 2) ** 0.5
+
+        # Check if swipe is valid: sufficient distance and correct direction
+        if distance < min_swipe_distance:
+            return None  # Element too small, caller should fall back to screen swipe
+
+        # Check direction is correct (end should be in the right direction from start)
+        if direction == "right" and end[0] <= start[0]:
+            return None
+        if direction == "left" and end[0] >= start[0]:
+            return None
+        if direction == "down" and end[1] <= start[1]:
+            return None
+        if direction == "up" and end[1] >= start[1]:
+            return None
+
+        return (start, end)
 
     def to_dict(self) -> dict:
         """Convert to dictionary for model input."""
@@ -324,6 +352,7 @@ class JeevesClient:
 
         Returns:
             ((start_x, start_y), (end_x, end_y)) or None if element not found
+            or if element is too small for a valid bounded swipe
         """
         element = self.get_element_by_index(index)
         if element:

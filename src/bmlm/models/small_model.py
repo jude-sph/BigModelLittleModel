@@ -38,10 +38,14 @@ COPY THE ACTION AND DIRECTION FROM THE PLAN STEP. Do not change them.
 
 Your only job: find the UI element that matches the plan's target description.
 
-Output JSON with the SAME action and direction as the plan step:
-{"action": "<copy from plan>", "target_index": <element number>, "direction": "<copy from plan if specified>", "confidence": "high/medium/low", "reasoning": "<why this element>", "needs_replanning": false}
+For actions that don't need an element (open_app, navigate_home, navigate_back, wait):
+- Set target_index to null
+- Copy input_text from plan if present (e.g., app name for open_app)
 
-If no element matches, set needs_replanning=true."""
+Output JSON with the SAME action and direction as the plan step:
+{"action": "<copy from plan>", "target_index": <element number or null>, "direction": "<copy from plan if specified>", "input_text": "<copy from plan if specified>", "confidence": "high/medium/low", "reasoning": "<why this element>", "needs_replanning": false}
+
+If no element matches (for actions that need one), set needs_replanning=true."""
 
 
 class SmallModel(BaseModel):
@@ -94,7 +98,10 @@ class SmallModel(BaseModel):
             if current_step.target_index is not None:
                 prompt_parts.append(f"  Expected element index: {current_step.target_index}")
             if current_step.input_text:
-                prompt_parts.append(f"  Text to type: {current_step.input_text}")
+                if current_step.action == "open_app":
+                    prompt_parts.append(f"  APP NAME: {current_step.input_text} (use this in input_text)")
+                else:
+                    prompt_parts.append(f"  Text to type: {current_step.input_text}")
             if current_step.expected_result:
                 prompt_parts.append(f"  Expected result: {current_step.expected_result}")
 
@@ -111,7 +118,14 @@ class SmallModel(BaseModel):
             if recent_actions:
                 prompt_parts.append(f"\nRecent actions: {json.dumps(recent_actions[-3:])}")
 
-            if current_step.direction:
+            # Build final instruction based on action type
+            no_element_actions = ("open_app", "navigate_home", "navigate_back", "wait")
+            if current_step.action in no_element_actions:
+                if current_step.action == "open_app" and current_step.input_text:
+                    prompt_parts.append(f"\nOutput action=\"{current_step.action}\" with input_text=\"{current_step.input_text}\" and target_index=null.<|im_end|>")
+                else:
+                    prompt_parts.append(f"\nOutput action=\"{current_step.action}\" with target_index=null.<|im_end|>")
+            elif current_step.direction:
                 prompt_parts.append(f"\nOutput action=\"{current_step.action}\" with direction=\"{current_step.direction}\" and find the matching element.<|im_end|>")
             else:
                 prompt_parts.append(f"\nOutput action=\"{current_step.action}\" and find the matching element.<|im_end|>")
