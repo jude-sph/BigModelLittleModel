@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 import time
 from dataclasses import dataclass, field
 from enum import Enum
@@ -18,6 +19,12 @@ if TYPE_CHECKING:
     from bmlm.models.small_model import SmallModel
 
 log = structlog.get_logger()
+
+
+def _status(message: str, end: str = "\n") -> None:
+    """Print a user-friendly status message."""
+    sys.stdout.write(f"\033[94m▸\033[0m {message}{end}")
+    sys.stdout.flush()
 
 
 class TriggerReason(Enum):
@@ -118,6 +125,9 @@ class Orchestrator:
         log.info("starting_task", task=task)
         self.state = OrchestratorState()
 
+        _status(f"Task: {task}")
+        _status("Big model planning...", end="")
+
         ui_elements = self._get_ui_elements() if self._get_ui_elements else []
         screenshot = self._get_screenshot() if self._get_screenshot else None
         result = self.big_model.generate(task=task, ui_elements=ui_elements, screenshot=screenshot)
@@ -127,11 +137,15 @@ class Orchestrator:
 
         # Check for empty or failed plan
         if not result.plan.steps:
+            print(" (empty plan)")
             log.warning(
                 "empty_plan_generated",
                 raw_response=result.raw_response[:500] if result.raw_response else "none",
                 parse_error=getattr(result.plan, "parse_error", False),
             )
+        else:
+            steps_preview = ", ".join(s.action for s in result.plan.steps[:3])
+            print(f" [{len(result.plan.steps)} steps: {steps_preview}]")
 
         log.info(
             "plan_generated",
@@ -163,10 +177,12 @@ class Orchestrator:
 
             # Only verify if the plan was expected to complete the task
             if plan.expects_completion:
+                _status("Verifying goal completion...", end="")
                 verification = self._verify_completion()
                 duration_ms = (time.perf_counter() - start_time) * 1000
 
                 if verification.goal_achieved:
+                    print(" \033[92m✓ Complete!\033[0m")
                     log.info("goal_verified_complete", reason=verification.reason)
                     return StepResult(
                         success=True,
@@ -177,6 +193,7 @@ class Orchestrator:
                     )
                 else:
                     # Goal not achieved - use new plan from verification
+                    print(f" not yet ({verification.reason})")
                     log.info("goal_not_complete", reason=verification.reason)
                     if verification.next_plan and verification.next_plan.steps:
                         self.state.current_plan = verification.next_plan
@@ -221,6 +238,12 @@ class Orchestrator:
         ui_elements = self._get_ui_elements()
 
         # Ask small model what to do
+        step_desc = f"{current_step.action}"
+        if current_step.direction:
+            step_desc += f" {current_step.direction}"
+        step_desc += f" → {current_step.target_description}"
+        _status(f"Step {current_step.index + 1}: {step_desc}", end="")
+
         decision = self.small_model.generate(
             current_step=current_step,
             plan=plan,
@@ -232,6 +255,7 @@ class Orchestrator:
         trigger_reason = self._check_replan_triggers(decision)
 
         if trigger_reason:
+            print(f" → replanning ({trigger_reason.value})")
             log.info("triggering_replan", reason=trigger_reason.value)
             self._replan(trigger_reason)
             duration_ms = (time.perf_counter() - start_time) * 1000
@@ -254,6 +278,16 @@ class Orchestrator:
 
         success = self._execute_action(action_dict)
 
+        # Show result
+        if decision.target_index is not None:
+            target_info = f" [element {decision.target_index}]"
+        else:
+            target_info = ""
+        if success:
+            print(f"{target_info} \033[92m✓\033[0m")
+        else:
+            print(f"{target_info} \033[91m✗\033[0m")
+
         # Record action
         self.state.action_history.append({
             **action_dict,
@@ -272,6 +306,7 @@ class Orchestrator:
 
         # Check for repeated action loop
         if self.state.consecutive_same_action >= self.config.max_repeated_actions:
+            _status(f"\033[93mRepeated action detected ({self.state.consecutive_same_action}x) - replanning...\033[0m")
             failure_context = (
                 f"The action '{decision.action}' on element {decision.target_index} "
                 f"(direction: {decision.direction}) has been attempted "
@@ -353,6 +388,8 @@ class Orchestrator:
         if not self.state.current_plan:
             return
 
+        _status("Big model replanning...", end="")
+
         ui_elements = self._get_ui_elements() if self._get_ui_elements else []
         screenshot = self._get_screenshot() if self._get_screenshot else None
 
@@ -373,6 +410,12 @@ class Orchestrator:
         self.state.last_action_signature = None
         self.state.consecutive_same_action = 0
         self.state.failure_context = None
+
+        if result.plan.steps:
+            steps_preview = ", ".join(s.action for s in result.plan.steps[:3])
+            print(f" [{len(result.plan.steps)} steps: {steps_preview}]")
+        else:
+            print(" (empty plan)")
 
         log.info(
             "replanned",
@@ -399,6 +442,7 @@ class Orchestrator:
 
             # Check if goal was verified as complete
             if result.action_taken == "goal_complete":
+                _status(f"\033[92m✓ Task complete!\033[0m (steps: {self.state.total_steps}, replans: {self.state.total_replans})")
                 log.info(
                     "task_complete",
                     total_steps=self.state.total_steps,
@@ -412,6 +456,7 @@ class Orchestrator:
             # Small delay between actions
             time.sleep(self.config.wait_after_action_ms / 1000)
 
+        _status(f"\033[91m✗ Max steps reached ({max_steps})\033[0m")
         log.warning("max_steps_reached", max_steps=max_steps)
         return False
 
