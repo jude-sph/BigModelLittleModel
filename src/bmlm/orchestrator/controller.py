@@ -319,14 +319,7 @@ class Orchestrator:
 
         # Check for repeated action loop
         if self.state.consecutive_same_action >= self.config.max_repeated_actions:
-            _status(f"\033[93mRepeated action detected ({self.state.consecutive_same_action}x) - replanning...\033[0m")
-            failure_context = (
-                f"The action '{decision.action}' on element {decision.target_index} "
-                f"(direction: {decision.direction}) has been attempted "
-                f"{self.state.consecutive_same_action} times without progress. "
-                f"This approach is not working. Try a different strategy."
-            )
-            self.state.failure_context = failure_context
+            _status(f"\033[93mRepeated action detected ({self.state.consecutive_same_action}x)\033[0m")
             log.warning(
                 "repeated_action_detected",
                 action=decision.action,
@@ -334,6 +327,33 @@ class Orchestrator:
                 direction=decision.direction,
                 count=self.state.consecutive_same_action,
             )
+
+            # First, try verification - the task might actually be complete
+            _status("Verifying if goal is complete...", end="")
+            verification = self._verify_completion()
+            if verification.goal_achieved:
+                print(" \033[92m✓ Complete!\033[0m")
+                log.info("goal_verified_complete_after_repeat", reason=verification.reason)
+                duration_ms = (time.perf_counter() - start_time) * 1000
+                return StepResult(
+                    success=True,
+                    action_taken="goal_complete",
+                    target_index=None,
+                    duration_ms=duration_ms,
+                    triggered_replan=False,
+                )
+            else:
+                print(f" not yet ({verification.reason})")
+
+            # Goal not complete - set failure context and replan
+            failure_context = (
+                f"The action '{decision.action}' on element {decision.target_index} "
+                f"(direction: {decision.direction}) has been attempted "
+                f"{self.state.consecutive_same_action} times without progress. "
+                f"Verification says: {verification.reason}. "
+                f"This approach is not working. Try a different strategy."
+            )
+            self.state.failure_context = failure_context
             self._replan(TriggerReason.REPEATED_FAILURE)
             duration_ms = (time.perf_counter() - start_time) * 1000
             return StepResult(
@@ -419,9 +439,11 @@ class Orchestrator:
         self.state.current_plan = result.plan
         self.state.steps_since_replan = 0
         self.state.total_replans += 1
-        # Reset failure tracking after replan
-        self.state.last_action_signature = None
-        self.state.consecutive_same_action = 0
+        # Only reset failure tracking if we explicitly addressed a failure
+        # Don't reset on PLAN_COMPLETE - we want to detect repeated actions across replans
+        if reason == TriggerReason.REPEATED_FAILURE:
+            self.state.last_action_signature = None
+            self.state.consecutive_same_action = 0
         self.state.failure_context = None
 
         # Extract current_screen from raw response for display

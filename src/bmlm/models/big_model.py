@@ -43,7 +43,7 @@ RULES:
 - Output 1-{max_steps} steps
 - For swipe/scroll: specify direction (up/down/left/right)
 - SLIDER DIRECTIONS: To INCREASE/MAXIMIZE a horizontal slider, swipe RIGHT. To DECREASE/MINIMIZE, swipe LEFT.
-- Set expects_completion to true only if target IS in list AND these steps will complete the goal
+- expects_completion: Set TRUE when your planned steps will achieve the goal. Set FALSE only when you need to navigate somewhere first before the goal can be achieved.
 - Output raw JSON only
 
 Example (home screen - "brightness" NOT in element list):
@@ -58,7 +58,7 @@ Example (expanded quick settings - "brightness" IS in list at index 8, swipe RIG
 Actions: tap, type, swipe, scroll, long_press, navigate_home, navigate_back, wait, open_app
 
 For open_app: set target_index to null and put app name in input_text field.
-Example: {"action": "open_app", "target_index": null, "input_text": "Settings", "target_description": "Settings app", "expected_result": "Settings app opens"}"""
+Example: {{"action": "open_app", "target_index": null, "input_text": "Settings", "target_description": "Settings app", "expected_result": "Settings app opens"}}"""
 
 
 VERIFICATION_PROMPT_TEMPLATE = """Look at the screenshot. Has this goal been achieved: "{goal}"?
