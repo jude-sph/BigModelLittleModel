@@ -31,7 +31,6 @@ class BMLMAgentConfig:
 
     # Orchestrator settings
     max_plan_steps: int = 3
-    max_steps_without_replan: int = 10
     wait_after_action_ms: int = 500
 
 
@@ -69,7 +68,6 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
 
         # Initialize orchestrator
         orch_config = OrchestratorConfig(
-            max_steps_without_replan=self.config.max_steps_without_replan,
             wait_after_action_ms=self.config.wait_after_action_ms,
         )
         self.orchestrator = Orchestrator(
@@ -100,6 +98,22 @@ class BMLMAgent(base_agent.EnvironmentInteractingAgent):
         self._current_task = task
         self._task_started = False
         log.info("task_set", task=task)
+
+    def set_task_success_checker(self, checker: callable) -> None:
+        """Set the ground truth success checker for the current task.
+
+        This allows the orchestrator to verify completion using AndroidWorld's
+        actual task evaluation instead of relying on visual verification.
+
+        Args:
+            checker: Callable that returns success score (0-1)
+        """
+        self.orchestrator.set_callbacks(
+            get_ui_elements=self.action_executor.get_ui_elements,
+            execute_action=self.action_executor.execute,
+            get_screenshot=self.action_executor.get_screenshot,
+            check_task_success=checker,
+        )
 
     def step(self, goal: str) -> base_agent.AgentInteractionResult:
         """Execute one step of the agent.

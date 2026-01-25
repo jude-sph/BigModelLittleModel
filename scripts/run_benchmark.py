@@ -134,6 +134,9 @@ def run_task(agent, task_name: str, task_class, env, max_steps: int) -> dict:
     log.info("task_goal", goal=goal)
     agent.set_task(goal)
 
+    # Set ground truth success checker for verification
+    agent.set_task_success_checker(lambda: task.is_successful(env))
+
     # Run until done or max steps
     steps = 0
     done = False

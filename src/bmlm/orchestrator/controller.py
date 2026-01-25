@@ -11,7 +11,6 @@ from typing import TYPE_CHECKING, Callable, Optional
 import structlog
 from PIL import Image
 
-from bmlm.models.small_model import Confidence
 from bmlm.orchestrator.plan import Plan
 
 if TYPE_CHECKING:
@@ -29,24 +28,14 @@ def _status(message: str, end: str = "\n") -> None:
 
 class TriggerReason(Enum):
     """Reasons for calling the big model."""
-    TASK_START = "task_start"
     PLAN_COMPLETE = "plan_complete"
-    LOW_CONFIDENCE = "low_confidence"
     NEEDS_REPLANNING = "needs_replanning"
-    STEP_FAILED = "step_failed"
-    MAX_STEPS_REACHED = "max_steps_reached"
-    REPEATED_FAILURE = "repeated_failure"
-    MANUAL = "manual"
 
 
 @dataclass
 class OrchestratorConfig:
     """Configuration for the orchestrator."""
 
-    confidence_threshold: Confidence = Confidence.MEDIUM
-    max_steps_without_replan: int = 10
-    max_retries_per_step: int = 3
-    max_repeated_actions: int = 2  # Trigger replan after N identical actions
     wait_after_action_ms: int = 500
 
 
@@ -67,14 +56,10 @@ class OrchestratorState:
     """Current state of the orchestrator."""
 
     current_plan: Plan | None = None
-    steps_since_replan: int = 0
     total_steps: int = 0
     total_replans: int = 0
     action_history: list[dict] = field(default_factory=list)
-    # Track repeated actions to detect loops
-    last_action_signature: str | None = None
-    consecutive_same_action: int = 0
-    failure_context: str | None = None  # Passed to big model on replan
+    failure_context: str | None = None  # Why small model requested replan
 
 
 class Orchestrator:
@@ -95,12 +80,14 @@ class Orchestrator:
         self._get_ui_elements: Callable[[], list[dict]] | None = None
         self._execute_action: Callable[[dict], bool] | None = None
         self._get_screenshot: Callable[[], Optional[Image.Image]] | None = None
+        self._check_task_success: Callable[[], float] | None = None  # Ground truth evaluation
 
     def set_callbacks(
         self,
         get_ui_elements: Callable[[], list[dict]],
         execute_action: Callable[[dict], bool],
         get_screenshot: Callable[[], Optional[Image.Image]] | None = None,
+        check_task_success: Callable[[], float] | None = None,
     ) -> None:
         """Set callbacks for UI interaction.
 
@@ -108,10 +95,12 @@ class Orchestrator:
             get_ui_elements: Function that returns current UI elements
             execute_action: Function that executes an action, returns success
             get_screenshot: Function that returns current screenshot (optional)
+            check_task_success: Function that returns task success score 0-1 (optional, ground truth)
         """
         self._get_ui_elements = get_ui_elements
         self._execute_action = execute_action
         self._get_screenshot = get_screenshot
+        self._check_task_success = check_task_success
 
     def start_task(self, task: str) -> Plan:
         """Start a new task by generating initial plan.
@@ -210,7 +199,6 @@ class Orchestrator:
                     log.info("goal_not_complete", reason=verification.reason)
                     if verification.next_plan and verification.next_plan.steps:
                         self.state.current_plan = verification.next_plan
-                        self.state.steps_since_replan = 0
                         self.state.total_replans += 1
                         log.info("continuing_with_new_plan", steps=len(verification.next_plan.steps))
                     else:
@@ -270,6 +258,9 @@ class Orchestrator:
         if trigger_reason:
             print(f" → replanning ({trigger_reason.value})")
             log.info("triggering_replan", reason=trigger_reason.value)
+            # Pass small model's reasoning to big model
+            if decision.reasoning:
+                self.state.failure_context = f"Small model: {decision.reasoning}"
             self._replan(trigger_reason)
             duration_ms = (time.perf_counter() - start_time) * 1000
             return StepResult(
@@ -309,64 +300,7 @@ class Orchestrator:
             "confidence": decision.confidence.value,
         })
 
-        # Track repeated actions to detect loops
-        action_signature = f"{decision.action}:{decision.target_index}:{decision.direction}"
-        if action_signature == self.state.last_action_signature:
-            self.state.consecutive_same_action += 1
-        else:
-            self.state.last_action_signature = action_signature
-            self.state.consecutive_same_action = 1
-
-        # Check for repeated action loop
-        if self.state.consecutive_same_action >= self.config.max_repeated_actions:
-            _status(f"\033[93mRepeated action detected ({self.state.consecutive_same_action}x)\033[0m")
-            log.warning(
-                "repeated_action_detected",
-                action=decision.action,
-                target_index=decision.target_index,
-                direction=decision.direction,
-                count=self.state.consecutive_same_action,
-            )
-
-            # First, try verification - the task might actually be complete
-            _status("Verifying if goal is complete...", end="")
-            verification = self._verify_completion()
-            if verification.goal_achieved:
-                print(" \033[92m✓ Complete!\033[0m")
-                log.info("goal_verified_complete_after_repeat", reason=verification.reason)
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                return StepResult(
-                    success=True,
-                    action_taken="goal_complete",
-                    target_index=None,
-                    duration_ms=duration_ms,
-                    triggered_replan=False,
-                )
-            else:
-                print(f" not yet ({verification.reason})")
-
-            # Goal not complete - set failure context and replan
-            failure_context = (
-                f"The action '{decision.action}' on element {decision.target_index} "
-                f"(direction: {decision.direction}) has been attempted "
-                f"{self.state.consecutive_same_action} times without progress. "
-                f"Verification says: {verification.reason}. "
-                f"This approach is not working. Try a different strategy."
-            )
-            self.state.failure_context = failure_context
-            self._replan(TriggerReason.REPEATED_FAILURE)
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            return StepResult(
-                success=False,
-                action_taken=decision.action,
-                target_index=decision.target_index,
-                duration_ms=duration_ms,
-                triggered_replan=True,
-                trigger_reason=TriggerReason.REPEATED_FAILURE,
-            )
-
         # Update state
-        self.state.steps_since_replan += 1
         self.state.total_steps += 1
 
         if success:
@@ -392,22 +326,41 @@ class Orchestrator:
 
     def _check_replan_triggers(self, decision) -> TriggerReason | None:
         """Check if any condition triggers a replan."""
-        # Explicit request from small model
+        # Only replan if explicitly requested by small model
         if decision.needs_replanning:
             return TriggerReason.NEEDS_REPLANNING
-
-        # Low confidence
-        if decision.confidence == Confidence.LOW:
-            return TriggerReason.LOW_CONFIDENCE
-
-        # Too many steps without replan
-        if self.state.steps_since_replan >= self.config.max_steps_without_replan:
-            return TriggerReason.MAX_STEPS_REACHED
 
         return None
 
     def _verify_completion(self):
-        """Verify if the goal has been achieved using the big model."""
+        """Verify if the goal has been achieved.
+
+        Uses ground truth evaluation if available, otherwise falls back to
+        visual verification with the big model.
+        """
+        # Prefer ground truth evaluation when available
+        if self._check_task_success:
+            try:
+                score = self._check_task_success()
+                log.info("ground_truth_evaluation", score=score)
+                # Create a simple verification result
+                from bmlm.models.big_model import VerificationResult
+                from bmlm.models.base import GenerationResult
+                return VerificationResult(
+                    goal_achieved=score > 0.5,
+                    reason=f"Ground truth score: {score:.2f}",
+                    next_plan=None,
+                    raw_response="",
+                    generation=GenerationResult(
+                        text="", tokens_generated=0,
+                        generation_time_ms=0, tokens_per_second=0
+                    ),
+                )
+            except Exception as e:
+                log.warning("ground_truth_evaluation_failed", error=str(e))
+                # Fall through to visual verification
+
+        # Fallback: visual verification with big model
         screenshot = self._get_screenshot() if self._get_screenshot else None
 
         return self.big_model.verify_completion(
@@ -434,17 +387,9 @@ class Orchestrator:
             failure_context=self.state.failure_context,
         )
 
-        had_failure_context = self.state.failure_context is not None
-
         self.state.current_plan = result.plan
-        self.state.steps_since_replan = 0
         self.state.total_replans += 1
-        # Only reset failure tracking if we explicitly addressed a failure
-        # Don't reset on PLAN_COMPLETE - we want to detect repeated actions across replans
-        if reason == TriggerReason.REPEATED_FAILURE:
-            self.state.last_action_signature = None
-            self.state.consecutive_same_action = 0
-        self.state.failure_context = None
+        self.state.failure_context = None  # Clear after use
 
         # Extract current_screen from raw response for display
         current_screen = None
@@ -470,7 +415,6 @@ class Orchestrator:
             reason=reason.value,
             new_steps=len(result.plan.steps),
             generation_ms=result.generation.generation_time_ms,
-            had_failure_context=had_failure_context,
         )
 
     def run_until_complete(self, task: str, max_steps: int = 50) -> bool:
@@ -513,7 +457,6 @@ class Orchestrator:
         return {
             "total_steps": self.state.total_steps,
             "total_replans": self.state.total_replans,
-            "steps_since_replan": self.state.steps_since_replan,
             "plan_progress": self.state.current_plan.progress if self.state.current_plan else 0,
             "actions_taken": len(self.state.action_history),
         }

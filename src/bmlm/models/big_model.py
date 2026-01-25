@@ -93,7 +93,7 @@ class BigModel(VisionModel):
             ui_elements: List of UI elements with id, text, type, bounds
             screenshot: Screenshot of current screen with Jeeves overlays
             previous_actions: Optional list of actions already taken
-            failure_context: Optional context about why the previous approach failed
+            failure_context: Why the previous plan failed (from small model)
 
         Returns:
             PlanningResult with the generated plan
@@ -110,9 +110,9 @@ class BigModel(VisionModel):
                 f"\nTask: {task}",
             ]
 
-            # Include failure context prominently if present
+            # Include failure context if present (from small model)
             if failure_context:
-                prompt_parts.append(f"\n⚠️ IMPORTANT - Previous approach failed:\n{failure_context}")
+                prompt_parts.append(f"\n⚠️ Previous attempt failed: {failure_context}")
 
             if previous_actions:
                 actions_str = json.dumps(previous_actions[-5:], indent=2)
@@ -169,8 +169,6 @@ class BigModel(VisionModel):
             trace_result["raw_output"] = result.text
             if current_screen:
                 trace_result["current_screen"] = current_screen
-            if failure_context:
-                trace_result["failure_context"] = failure_context
             # Pass step details for readable summary
             trace_result["plan_steps_detail"] = [
                 {
