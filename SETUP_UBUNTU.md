@@ -8,6 +8,7 @@ This guide covers setting up BMLM on Ubuntu with an NVIDIA GPU (tested on RTX 30
 - NVIDIA GPU with CUDA support (24GB+ VRAM recommended for 7B model)
 - CUDA 12.1+ and cuDNN installed
 - Python 3.11+
+- Node.js (for ws-scrcpy)
 - Android Studio with emulator
 
 ## 1. Install CUDA and cuDNN
@@ -29,22 +30,19 @@ source ~/.bashrc
 ## 2. Clone and Set Up Project
 
 ```bash
-git clone <repository-url>
+git clone -b ubuntu-nvidia https://github.com/jude-sph/BigModelLittleModel
 cd BigModelLittleModel
-git checkout ubuntu-nvidia
 
 # Create virtual environment
 python3.11 -m venv .venv
 source .venv/bin/activate
 
-# Install PyTorch with CUDA support first
-pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# Install dependencies
+make install
 
-# Install project dependencies
-pip install -e .
-
-# Optional: Install flash-attention for faster inference
-pip install flash-attn --no-build-isolation
+# Or manually:
+# pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
+# pip install -e ".[dev,tracing]"
 ```
 
 ## 3. Verify CUDA Setup
@@ -59,27 +57,37 @@ print(f"CUDA memory: {torch.cuda.get_device_properties(0).total_memory / 1e9:.1f
 ## 4. Set Up Android Emulator
 
 ```bash
-# Install Android SDK (if not already installed)
-sudo apt install android-sdk
-
-# Or use Android Studio's SDK manager
-# Typical Linux SDK path: ~/Android/Sdk
-
-# Create AVD for AndroidWorld
-# Follow AndroidWorld setup instructions
-
-# Start emulator with gRPC
+# Start emulator with gRPC (required for AndroidWorld)
 emulator -avd AndroidWorldAvd -grpc 8554
+
+# Enable ADB over TCP (in another terminal, needed for ws-scrcpy)
+adb tcpip 5555
+adb connect localhost:5555
 ```
 
-## 5. Configure ADB Path
+## 5. Remote Screen Viewing (from Mac)
 
-Edit `configs/default.yaml` if your ADB path differs:
+To view the Android emulator from your Mac:
 
-```yaml
-android:
-  adb_path: "~/Android/Sdk/platform-tools/adb"
+**On Ubuntu (start these in separate terminals):**
+
+```bash
+# Terminal 1: Start ws-scrcpy web interface
+npx ws-scrcpy
+
+# Terminal 2: Start Phoenix tracing (optional)
+phoenix serve
 ```
+
+**On Mac (SSH with port forwarding):**
+
+```bash
+ssh -L 8000:localhost:8000 -L 6006:localhost:6006 user@ubuntu-machine
+```
+
+**Open in browser on Mac:**
+- Android screen: http://localhost:8000
+- Phoenix tracing: http://localhost:6006
 
 ## 6. Run Benchmark
 
@@ -87,14 +95,17 @@ android:
 # Activate environment
 source .venv/bin/activate
 
-# Run with tracing (recommended)
+# Run with tracing
+make run
+
+# Or manually:
 python scripts/run_benchmark.py --config configs/default.yaml
 
 # Run specific task
 python scripts/run_benchmark.py --task ContactsAddContact
 
 # Dry run to test model loading
-python scripts/run_benchmark.py --dry-run
+make dry-run
 ```
 
 ## Memory Usage
@@ -104,32 +115,43 @@ With 4-bit quantization (default):
 - Small model (Qwen2.5-3B): ~2-3 GB VRAM
 - Total: ~8-10 GB VRAM
 
-For GPUs with less memory, consider:
-- Using smaller models (Qwen2.5-1.5B for small model)
-- Running models sequentially instead of simultaneously
+## Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `make install` | Install all dependencies |
+| `make run` | Run benchmark with tracing |
+| `make dry-run` | Test model loading |
+| `make scrcpy-web` | Start web-based screen viewer |
+| `make phoenix` | Start tracing UI |
+| `make gpu-status` | Check GPU usage |
 
 ## Troubleshooting
 
 ### CUDA out of memory
 ```bash
-# Clear cache between runs
-python -c "import torch; torch.cuda.empty_cache()"
-
-# Use smaller batch sizes or models
+make clear-cuda
+# Or use smaller models in configs/default.yaml
 ```
 
 ### bitsandbytes issues
 ```bash
-# Reinstall bitsandbytes
 pip uninstall bitsandbytes
 pip install bitsandbytes --no-cache-dir
 ```
 
+### ws-scrcpy can't connect
+```bash
+# Make sure ADB is in TCP mode
+adb tcpip 5555
+adb connect localhost:5555
+
+# Check connection
+adb devices
+```
+
 ### Flash attention installation fails
 ```bash
-# Install build dependencies
 pip install packaging ninja
-
-# Install with specific CUDA version
 CUDA_HOME=/usr/local/cuda-12.1 pip install flash-attn --no-build-isolation
 ```
