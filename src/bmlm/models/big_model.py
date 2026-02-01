@@ -141,16 +141,8 @@ class BigModel(VisionModel):
             if screenshot is not None:
                 result = self._generate_with_image(prompt, screenshot)
             else:
-                # Fallback: include UI elements as text if no screenshot
-                prompt_parts.insert(2, f"\nUI Elements:\n{json.dumps(ui_elements, indent=2)}")
-                prompt = "\n".join(prompt_parts)
-                # Use parent's text generation - need to load as text model
-                from mlx_lm import generate, load
-                if not self._loaded:
-                    self.load()
-                import time
-                start = time.perf_counter()
-                # This is a fallback, won't work well - vision model needs image
+                # Fallback: vision model without screenshot won't work well
+                # Return empty result to trigger fallback behavior
                 result = GenerationResult(
                     text="{}",
                     tokens_generated=0,

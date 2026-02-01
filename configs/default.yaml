@@ -1,24 +1,25 @@
-# BMLM Configuration
+# BMLM Configuration (Ubuntu/NVIDIA)
 
 # Model configuration
 models:
   big:
     # Qwen2.5-VL-7B for planning (vision-language model)
-    path: "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
+    # Using standard HuggingFace path (will be quantized to 4-bit on load)
+    path: "Qwen/Qwen2.5-VL-7B-Instruct"
     max_tokens: 800
     temperature: 0.3
     top_p: 0.9
 
   small:
-    # Qwen2.5-3B for execution (text-only, faster), and somehow faster than the 1.5B model
-    path: "mlx-community/Qwen2.5-3B-Instruct-4bit"
+    # Qwen2.5-3B for execution (text-only, faster)
+    path: "Qwen/Qwen2.5-3B-Instruct"
     max_tokens: 256
     temperature: 0.5
     top_p: 0.9
 
 # Alternative small models to try:
-# - mlx-community/Qwen2.5-1.5B-Instruct-4bit  (faster, less capable)
-# - mlx-community/gemma-2-2b-it-4bit          (different architecture)
+# - Qwen/Qwen2.5-1.5B-Instruct  (faster, less capable)
+# - google/gemma-2-2b-it        (different architecture)
 
 # Orchestrator settings
 orchestrator:
@@ -46,8 +47,8 @@ android:
   # gRPC port for accessibility forwarding
   grpc_port: 8554
 
-  # ADB path
-  adb_path: "~/Library/Android/sdk/platform-tools/adb"
+  # ADB path (typical Linux location)
+  adb_path: "~/Android/Sdk/platform-tools/adb"
 
   # ADB serial (usually emulator-5554)
   adb_serial: "emulator-5554"

@@ -20,9 +20,9 @@ log = structlog.get_logger()
 class BMLMAgentConfig:
     """Configuration for the BMLM agent."""
 
-    # Model paths (MLX format)
-    big_model_path: str = "mlx-community/Qwen2.5-VL-7B-Instruct-4bit"
-    small_model_path: str = "mlx-community/Qwen2.5-3B-Instruct-4bit"
+    # Model paths (HuggingFace format, will be quantized to 4-bit on load)
+    big_model_path: str = "Qwen/Qwen2.5-VL-7B-Instruct"
+    small_model_path: str = "Qwen/Qwen2.5-3B-Instruct"
 
     # Generation settings
     big_model_max_tokens: int = 1024

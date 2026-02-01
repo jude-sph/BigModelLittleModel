@@ -5,14 +5,18 @@ description = "Big Model Little Model: Hierarchical agents for Android GUI autom
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
-    # MLX for Apple Silicon inference
-    "mlx>=0.22.0",
-    "mlx-lm>=0.21.0",
-    "mlx-vlm>=0.1.0",
-
-    # PyTorch (required for VLM image processor)
+    # PyTorch with CUDA support (install separately via pip with correct CUDA version)
+    # pip install torch torchvision --index-url https://download.pytorch.org/whl/cu121
     "torch>=2.0.0",
     "torchvision>=0.15.0",
+
+    # HuggingFace for model loading
+    "transformers>=4.40.0",
+    "accelerate>=0.27.0",
+    "bitsandbytes>=0.42.0",  # For 4-bit/8-bit quantization on NVIDIA
+
+    # Flash attention for faster inference (optional, install separately)
+    # pip install flash-attn --no-build-isolation
 
     # AndroidWorld benchmark
     "android-world @ git+https://github.com/google-research/android_world.git",
